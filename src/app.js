@@ -2,6 +2,7 @@
 // Pure ES modules, no build step. Auth uses PKCE, so only the public Client ID lives here.
 
 const CLIENT_ID = '4a805ba1e7ce4e008949154d92827b38';
+const IS_APP = !!window.amplite; // running inside the Amplite desktop app
 const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/, '');
 const SCOPES = [
   'streaming', 'user-read-email', 'user-read-private',
@@ -216,7 +217,10 @@ function initSDK() {
     p.addListener('initialization_error', ({ message }) => console.warn('SDK init:', message));
     p.addListener('authentication_error', ({ message }) => toast('Player auth error: ' + message));
     p.addListener('account_error', () => toast('In-browser playback needs Spotify Premium — Amplite will control your other devices instead.'));
-    p.addListener('playback_error', ({ message }) => console.warn('Playback:', message));
+    p.addListener('playback_error', ({ message }) => {
+      console.warn('Playback:', message);
+      if (!S.drmWarned) { S.drmWarned = true; toast('Spotify blocked in-app playback here — open the Spotify app and Amplite will control it.'); }
+    });
     p.connect();
   };
   const s = document.createElement('script');
@@ -379,6 +383,11 @@ function updatePlayerUI() {
 
   if ((n?.uri || null) !== S.likedUri) checkLiked(n?.uri || null);
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
+  if ('mediaSession' in navigator && n && navigator.mediaSession.metadata?.title !== n.name) {
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: n.name, artist: n.artists.map(a => a.name).join(', '), album: n.album?.name || '', artwork: n.album?.image ? [{ src: n.album.image, sizes: '300x300' }] : [] });
+    } catch {}
+  }
   markPlaying();
 }
 function markPlaying() {
@@ -593,6 +602,10 @@ function applyTheme(id) {
   store.set('theme', id);
   S.vizGrad = null;
   $$('.theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === id));
+  if (IS_APP) {
+    const cs = getComputedStyle(document.documentElement);
+    window.amplite.setTheme({ bg: cs.getPropertyValue('--bg').trim(), text: cs.getPropertyValue('--text').trim() });
+  }
 }
 function renderThemes() {
   $('#themeList').innerHTML = THEMES.map(([id, name]) =>
@@ -620,8 +633,22 @@ function closeInline() {
   $('#ampHost').classList.add('hidden');
   $('#app').classList.remove('hidden');
 }
+function onAmpWinClosed() {
+  if (!S.ampWin) return;
+  $('#ampHost').prepend(ampEl);
+  S.ampWin = null; S.vizGrad = null;
+  if (IS_APP) window.amplite.setMainVisible(true);
+  startViz();
+}
 async function openPip() {
-  const w = await window.documentPictureInPicture.requestWindow({ width: 300, height: 140 });
+  let w;
+  if (IS_APP) {
+    // Desktop app: a frameless, always-on-top window (see main.js).
+    w = window.open('', 'amp');
+    if (!w) throw new Error('Mini amp window was blocked');
+  } else {
+    w = await window.documentPictureInPicture.requestWindow({ width: 300, height: 140 });
+  }
   closeInline();
   for (const ss of document.styleSheets) {
     try {
@@ -638,22 +665,29 @@ async function openPip() {
   w.document.body.append(ampEl);
   w.document.addEventListener('keydown', onKey);
   S.ampWin = w; S.vizGrad = null;
-  w.addEventListener('pagehide', () => {
-    $('#ampHost').prepend(ampEl);
-    S.ampWin = null; S.vizGrad = null;
-    startViz();
-  });
+  w.addEventListener('pagehide', onAmpWinClosed);
+  if (IS_APP) {
+    // Fit the window to the amp, then tuck the main window away.
+    await new Promise(r => w.requestAnimationFrame(r));
+    const r = ampEl.getBoundingClientRect();
+    try { w.resizeTo(Math.ceil(r.width), Math.ceil(r.height)); } catch {}
+    window.amplite.setMainVisible(false);
+  }
   startViz();
 }
+// A closed popup doesn't always fire pagehide, so double-check.
+setInterval(() => { if (S.ampWin?.closed) onAmpWinClosed(); }, 500);
+
 async function toggleAmp() {
   if (S.ampWin) return S.ampWin.close();
   if (S.ampMode === 'inline') return closeInline();
-  if ('documentPictureInPicture' in window) {
+  if (IS_APP || 'documentPictureInPicture' in window) {
     try { return await openPip(); } catch (e) { console.warn('Pop-out failed, using in-page mini player', e); }
   }
   openInline();
 }
 function ampPopToggle() {
+  if (IS_APP) return ampClose(); // in the app, this button returns to the full window
   if (S.ampWin) { S.ampWin.close(); openInline(); return; }
   if (!('documentPictureInPicture' in window)) return toast('Always-on-top pop-out needs Chrome or Edge.');
   openPip().catch(() => toast('Couldn’t open the pop-out window.'));
@@ -803,6 +837,13 @@ function showLogin(err) {
 }
 
 async function boot() {
+  if (IS_APP) {
+    document.documentElement.classList.add('is-app');
+    window.amplite.onMedia(cmd => ({ toggle: togglePlay, next, prev, stop })[cmd]?.());
+    $('[data-amp="popout"]').remove();
+    $('[data-amp="close"]').title = 'Back to full player';
+    $('.amp-hint').textContent = '';
+  }
   $$('[data-i]').forEach(el => el.insertAdjacentHTML('afterbegin', svg(el.dataset.i)));
   $$('[data-logo]').forEach(el => { el.innerHTML = LOGO; });
   renderThemes();

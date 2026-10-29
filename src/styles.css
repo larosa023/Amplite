@@ -310,8 +310,20 @@ kbd { font:11px "JetBrains Mono", monospace; border:1px solid var(--border); bor
 
 /* Pop-out window */
 .pip-body { margin:0; background:var(--amp-lcd); overflow:hidden; }
-.pip-body .amp { width:100%; min-height:100vh; border:0; border-radius:0; box-shadow:none; }
+.pip-body .amp { width:300px; border:0; border-radius:0; box-shadow:none; zoom:1.1; }
 .pip-body .amp-lcd { grid-template-columns:104px minmax(0,1fr); }
+
+/* ============ Desktop app ============ */
+.titlebar { display:none; }
+.is-app .titlebar { display:flex; align-items:center; gap:8px; position:fixed; top:0; left:0; right:0; height:36px; padding:0 14px; font-size:12px; font-weight:600; color:var(--muted); -webkit-app-region:drag; user-select:none; z-index:200; background:var(--bg); }
+.logo.sm { width:16px; height:16px; }
+.is-app .app { height:calc(100vh - 36px); margin-top:36px; padding-top:0; }
+.is-app .login, .is-app .amp-host { top:36px; }
+.is-app .theme-panel { top:94px; }
+.is-app .popover, .is-app button, .is-app input, .is-app a { -webkit-app-region:no-drag; }
+.pip-body .amp-title { -webkit-app-region:drag; height:20px; cursor:default; }
+.pip-body .amp-title .amp-x { -webkit-app-region:no-drag; color:var(--text); opacity:.75; width:16px; height:16px; }
+.pip-body .amp-title .amp-x:hover { opacity:1; }
 
 /* ============ Responsive ============ */
 @media (max-width:1000px) {

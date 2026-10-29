@@ -1,0 +1,135 @@
+// Amplite — desktop shell (Electron, castLabs build with Widevine for Spotify playback)
+const { app, BrowserWindow, components, ipcMain, globalShortcut, shell, Menu } = require('electron');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+// Spotify only accepts loopback redirect URIs for desktop apps, so the UI is served
+// from a tiny local server. Add http://127.0.0.1:43821/ in your Spotify dashboard.
+const PORT = 43821;
+const ROOT = path.join(__dirname, 'src');
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+
+let mainWin = null;
+const boundsFile = () => path.join(app.getPath('userData'), 'window.json');
+
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', () => {
+  if (!mainWin) return;
+  if (!mainWin.isVisible()) mainWin.show();
+  if (mainWin.isMinimized()) mainWin.restore();
+  mainWin.focus();
+});
+
+function startServer() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      let file = path.normalize(path.join(ROOT, decodeURIComponent(url.pathname)));
+      if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
+      if (url.pathname === '/' || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(ROOT, 'index.html');
+      fs.readFile(file, (err, data) => {
+        if (err) { res.writeHead(404); return res.end(); }
+        res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+        res.end(data);
+      });
+    });
+    server.once('error', reject);
+    server.listen(PORT, '127.0.0.1', () => resolve(server));
+  });
+}
+
+function loadBounds() {
+  try { return JSON.parse(fs.readFileSync(boundsFile(), 'utf8')); } catch { return {}; }
+}
+function saveBounds() {
+  if (!mainWin || mainWin.isMinimized() || !mainWin.isVisible()) return;
+  try { fs.writeFileSync(boundsFile(), JSON.stringify({ ...mainWin.getNormalBounds(), maximized: mainWin.isMaximized() })); } catch {}
+}
+
+function createMain() {
+  const b = loadBounds();
+  mainWin = new BrowserWindow({
+    width: b.width || 1280, height: b.height || 820, x: b.x, y: b.y,
+    minWidth: 800, minHeight: 560,
+    show: false,
+    title: 'Amplite',
+    backgroundColor: '#0b0d12',
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#0b0d12', symbolColor: '#e9ecf2', height: 36 },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      backgroundThrottling: false, // keep playback + timers running when hidden behind the mini amp
+    },
+  });
+  if (b.maximized) mainWin.maximize();
+  mainWin.once('ready-to-show', () => mainWin.show());
+  mainWin.on('resize', saveBounds);
+  mainWin.on('move', saveBounds);
+  mainWin.on('closed', () => { mainWin = null; app.quit(); });
+
+  // window.open('', 'amp') from the renderer becomes the frameless, always-on-top mini amp.
+  mainWin.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (frameName === 'amp') {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 330, height: 150, frame: false, resizable: false, maximizable: false, fullscreenable: false,
+          alwaysOnTop: true, skipTaskbar: false, title: 'Amplite', backgroundColor: '#05070b',
+          icon: path.join(__dirname, 'build', 'icon.png'),
+          webPreferences: { backgroundThrottling: false },
+        },
+      };
+    }
+    if (/^https?:/.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  mainWin.webContents.on('did-create-window', win => {
+    win.setAlwaysOnTop(true, 'floating');
+    win.setMenu(null);
+  });
+  // Keep in-app navigation on our origin or Spotify's login pages.
+  mainWin.webContents.on('will-navigate', (e, url) => {
+    if (url.startsWith(`http://127.0.0.1:${PORT}`) || url.startsWith('https://accounts.spotify.com') || url.startsWith('https://www.spotify.com') || url.startsWith('https://challenge.spotify.com')) return;
+    e.preventDefault();
+    shell.openExternal(url);
+  });
+
+  mainWin.loadURL(`http://127.0.0.1:${PORT}/`);
+}
+
+ipcMain.on('theme', (_e, { bg, text }) => {
+  try { mainWin?.setTitleBarOverlay({ color: bg, symbolColor: text }); mainWin?.setBackgroundColor(bg); } catch {}
+});
+ipcMain.on('main-visibility', (_e, show) => {
+  if (!mainWin) return;
+  if (show) { mainWin.show(); mainWin.focus(); } else mainWin.hide();
+});
+ipcMain.on('quit', () => app.quit());
+
+app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
+  try {
+    await components.whenReady();
+    console.log('Widevine components:', components.status());
+  } catch (e) { console.warn('Widevine unavailable:', e?.message || e); }
+
+  try { await startServer(); }
+  catch (e) {
+    const { dialog } = require('electron');
+    dialog.showErrorBox('Amplite', `Couldn't start on port ${PORT}. Is Amplite already running?\n\n${e.message}`);
+    return app.quit();
+  }
+  createMain();
+
+  const send = cmd => mainWin?.webContents.send('media', cmd);
+  globalShortcut.register('MediaPlayPause', () => send('toggle'));
+  globalShortcut.register('MediaNextTrack', () => send('next'));
+  globalShortcut.register('MediaPreviousTrack', () => send('prev'));
+  globalShortcut.register('MediaStop', () => send('stop'));
+});
+
+app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('window-all-closed', () => app.quit());

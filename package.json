@@ -1,0 +1,56 @@
+{
+  "name": "amplite",
+  "productName": "Amplite",
+  "version": "1.0.0",
+  "description": "A lightweight Spotify desktop player with themes and a mini amp.",
+  "main": "main.js",
+  "author": "larosa023",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "dist:portable": "electron-builder --win portable",
+    "dist:zip": "electron-builder --win zip"
+  },
+  "devDependencies": {
+    "electron": "github:castlabs/electron-releases#v43.8.3+wvcus",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.larosa023.amplite",
+    "productName": "Amplite",
+    "electronVersion": "43.8.3+wvcus",
+    "electronDownload": {
+      "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "build/icon.png"
+    ],
+    "afterPack": "build/vmp-sign.js",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Amplite-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Amplite",
+      "artifactName": "Amplite-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Amplite-${version}-portable.${ext}"
+    }
+  }
+}

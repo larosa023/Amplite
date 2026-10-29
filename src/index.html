@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div class="titlebar"><span class="logo sm" data-logo></span><span>Amplite</span></div>
 
   <!-- Login -->
   <div id="login" class="login hidden">
@@ -25,7 +26,7 @@
         <summary>First-time setup</summary>
         <p>In your Spotify developer dashboard, add this exact Redirect URI:</p>
         <code id="redirectUri"></code>
-        <p>In-browser playback needs Spotify Premium and Chrome, Edge or Firefox.</p>
+        <p id="setupNote">Playback needs Spotify Premium. Also add your Spotify email under User Management.</p>
       </details>
     </div>
   </div>

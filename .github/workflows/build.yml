@@ -1,0 +1,40 @@
+name: Build Windows app
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+      EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install castLabs EVS (only when secrets are set)
+        if: env.EVS_ACCOUNT_NAME != ''
+        run: pip install --upgrade castlabs-evs
+      - run: npm ci
+      - name: Build installer + portable zip
+        run: npx electron-builder --win nsis zip --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Amplite-Windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.zip
