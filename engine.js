@@ -27,6 +27,8 @@ class Engine {
     this.logs = [];            // last 300 log lines, for diagnostics
     this.format = null;        // file format actually being streamed, e.g. OGG_VORBIS_320
     this.junk = 0;             // undecodable-audio warnings for the current track
+    this.keyFails = 0;         // tracks Spotify refused to give a decryption key for
+    this.keyRefused = false;   // true once Spotify has clearly refused keys to this account
   }
 
   configure({ volume, bitrate, normalise } = {}) {
@@ -54,7 +56,7 @@ class Engine {
     this.send(this.status());
   }
 
-  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin, user: this.user, running: !!this.proc, format: this.format, streamKbps: this.format ? +(this.format.match(/(\d+)$/) || [])[1] || null : null }; }
+  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin, user: this.user, running: !!this.proc, keyRefused: this.keyRefused, keyFails: this.keyFails, format: this.format, streamKbps: this.format ? +(this.format.match(/(\d+)$/) || [])[1] || null : null }; }
 
   // Collapses repeats (e.g. thousands of decoder warnings) so the diagnostics stay readable.
   log(line) {
@@ -86,6 +88,7 @@ class Engine {
       '--oauth-port', '5588',
     ];
     if (this.normalise) args.push('--enable-volume-normalisation');
+    this.keyFails = 0; this.keyRefused = false; this.format = null; this.junk = 0;
     this.set('starting', this.hasLogin ? 'Connecting…' : 'Waiting for one-time approval');
     const p = spawn(bin, args, { windowsHide: true, env: { ...process.env, RUST_LOG: 'info' } });
     this.proc = p;
@@ -101,8 +104,9 @@ class Engine {
         this.send(this.status());
       }
       else if (/symphonia_bundle_mp3.*(skipping junk|invalid mpeg)/i.test(line)) {
-        if (++this.junk === 40) this.log('!!! Amplite: this track came as an MP3 the engine could not decode (it will be skipped).');
+        if (++this.junk === 40) { this.log('!!! Amplite: this track came as an MP3 the engine could not decode (it will be skipped).'); this.keyFail(); }
       }
+      else if (/error audio key|Unable to load key|audio key (response )?(error|timeout)|refused the audio key/i.test(line)) this.keyFail();
       else if (/PremiumAccountRequired|premium account required|requires? (a )?premium/i.test(line)) this.set('error', 'This Spotify account isn’t Premium. Spotify only allows playback in apps like Amplite on Premium accounts.');
       else if (/Failed to get Spotify access token|Bad credentials|Login failed/i.test(line)) this.set('error', line.replace(/^.*?\]\s*/, '').slice(0, 160));
       if (process.env.AMPLITE_ENGINE_DEBUG) console.log('[engine]', line);
@@ -130,6 +134,14 @@ class Engine {
   }
 
   // Resolves once the process has really exited (Windows can take a moment).
+  // Spotify sometimes refuses decryption keys to librespot for certain Premium accounts
+  // (librespot #1649 / #1735). After two refused tracks we tell the UI to switch to the Spotify app.
+  keyFail() {
+    this.keyFails++;
+    if (this.keyFails >= 2 && !this.keyRefused) { this.keyRefused = true; this.log('!!! Amplite: Spotify is refusing audio keys for this account; switching to the Spotify app.'); }
+    this.send(this.status());
+  }
+
   stop() {
     this.quitting = true;
     const p = this.proc; this.proc = null;

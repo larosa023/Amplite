@@ -32,6 +32,8 @@ Amplite plays through a bundled copy of [librespot](https://github.com/librespot
 - Quality (320 / 160 / 96 kbps), volume normalization and the engine status are in **Settings → Audio**, along with **Restart** and **Re-link** buttons if something goes wrong.
 - Amplite can still control your other Spotify devices (phone, desktop app). Click **Play here** to move playback into Amplite.
 
+**Accounts the engine can't play:** Spotify refuses decryption keys to librespot for some Premium accounts (a known upstream issue, [librespot #1735](https://github.com/librespot-org/librespot/issues/1735)). Amplite detects this and switches automatically to playing through the **official Spotify desktop app**, which it starts minimized in the background, while you keep using Amplite as normal. Install the Spotify desktop app if you don't have it. You can also choose the source yourself in **Settings → Audio → Play audio with**.
+
 librespot is unofficial and Spotify Premium is required. If the engine is missing from a build, Amplite falls back to Spotify's Web Playback SDK.
 
 ## Build it yourself

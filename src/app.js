@@ -48,7 +48,7 @@ const AMP_DEFAULTS = {
   art: false, title: true, marquee: true, meta: true, vol: true, seek: true, controls: true, toggles: true,
   scroll: 'normal', time: 'elapsed', opacity: 100, onTop: true,
 };
-const DEFAULTS = { ui: { sideMin: false, lite: false }, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false } };
+const DEFAULTS = { ui: { sideMin: false, lite: false }, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto' } };
 const clone = o => JSON.parse(JSON.stringify(o));
 const CFG = (() => {
   const saved = store.get('cfg', {}) || {}, c = clone(DEFAULTS);
@@ -231,7 +231,18 @@ const S = {
   vizGrad: null, vizPeak: null,
   engine: null, engineId: null, // bundled 320 kbps librespot engine (desktop app)
 };
-const useEngine = () => IS_APP && S.engine && S.engine.state !== 'missing';
+// Where audio comes from: the bundled engine, or the official Spotify app (fallback for
+// accounts Spotify refuses to give engine decryption keys to).
+const refusedKey = () => 'keyRefused:' + (S.me?.id || '');
+const engineRefused = () => !!store.get(refusedKey(), false);
+const playMode = () => {
+  if (!IS_APP) return 'web';
+  if (CFG.audio.source === 'app') return 'app';
+  if (CFG.audio.source === 'engine') return 'engine';
+  return engineRefused() ? 'app' : 'engine';
+};
+const useEngine = () => IS_APP && playMode() === 'engine' && S.engine && S.engine.state !== 'missing';
+const useApp = () => IS_APP && playMode() === 'app';
 const pos = () => {
   const n = S.now; if (!n) return 0;
   return n.paused ? n.position : Math.min(n.duration, n.position + (performance.now() - n.ts));
@@ -316,6 +327,30 @@ async function engineReady(timeout = 12000) {
   }
   return S.engine?.state === 'ready';
 }
+async function findSpotifyApp() {
+  try {
+    const d = await api('/me/player/devices');
+    const host = (S.appHost || '').toLowerCase();
+    const pcs = (d?.devices || []).filter(x => x.type === 'Computer' && !/^Amplite/.test(x.name) && !x.is_restricted);
+    const dev = pcs.find(x => x.name.toLowerCase() === host) || pcs[0];
+    if (dev) { S.appDeviceId = dev.id; S.appDeviceName = dev.name; return dev.id; }
+  } catch {}
+  return null;
+}
+async function spotifyAppTarget() {
+  let id = await findSpotifyApp();
+  if (id) return id;
+  const info = await window.amplite.spotifyApp('check');
+  S.appHost = info.host;
+  if (!info.installed) toast('Starting Spotify… (if nothing happens, install the Spotify desktop app from spotify.com/download)');
+  else toast('Starting Spotify in the background…');
+  const r = await window.amplite.spotifyApp('launch');
+  if (!r.ok) { toast('Couldn’t start Spotify: ' + (r.error || 'unknown')); return undefined; }
+  for (let i = 0; i < 30; i++) { await sleep(1000); id = await findSpotifyApp(); if (id) return id; }
+  toast('Spotify didn’t show up — open the Spotify app once, then press play again.');
+  return undefined;
+}
+
 // Spots the two account problems that break playback for new users.
 function accountProblem() {
   if (S.me?.product && S.me.product !== 'premium')
@@ -326,6 +361,7 @@ function accountProblem() {
   return null;
 }
 async function target() {
+  if (useApp()) return spotifyAppTarget();
   if (useEngine()) {
     const prob = accountProblem();
     if (prob) { toast(prob.kind === 'free' ? 'Playback needs Spotify Premium — see Settings → Audio.' : 'The audio engine is signed into a different Spotify account — see Settings → Audio.'); openSettings('audio'); return undefined; }
@@ -341,6 +377,12 @@ function renderEngine() {
   const label = !e ? 'Checking…' : e.state === 'missing' ? 'Not included in this build — using Spotify’s web player'
     : e.state === 'ready' ? (e.format ? `Ready · now streaming ${/MP3/.test(e.format) ? 'MP3' : 'Ogg Vorbis'} ${e.streamKbps} kbps${e.streamKbps && e.streamKbps < e.bitrate ? ` (${e.bitrate} isn’t available for this track on your account)` : ''}` : `Ready · ${e.bitrate} kbps`) : e.state === 'auth' ? 'Waiting for one-time approval in your browser'
     : e.state === 'error' ? 'Error: ' + (e.detail || 'unknown') : /restart/i.test(e.detail || '') ? 'Restarting…' : 'Starting…';
+  if (useApp()) {
+    const why = CFG.audio.source === 'app' ? 'you chose the Spotify app' : 'Spotify refuses the built-in engine’s audio keys for this account';
+    el.className = 'engine-line ready';
+    el.innerHTML = `<span class="dot"></span><span>Playing through the Spotify desktop app${S.appDeviceName ? ` (“${esc(S.appDeviceName)}”)` : ''} — ${why}. Quality follows the Spotify app’s own setting.</span>`;
+    return;
+  }
   const prob = accountProblem();
   el.className = 'engine-line ' + (prob ? 'error' : e?.state || '');
   el.innerHTML = `<span class="dot"></span><span>${esc(prob ? prob.msg : label)}${e?.user && !prob ? `<small class="muted"> · signed in as ${esc(e.user)}</small>` : ''}${e?.name ? `<small class="muted"> · device “${esc(e.name)}”</small>` : ''}</span>`;
@@ -357,7 +399,7 @@ async function copyDiagnostics() {
   add('Problem', accountProblem()?.msg || 'none detected');
   try { const d = await api('/me/player/devices'); add('Devices', (d?.devices || []).map(x => `${x.name} [${x.type}${x.is_active ? ', active' : ''}${x.is_restricted ? ', restricted' : ''}]`).join(' | ') || 'none'); } catch (e) { add('Devices', 'error ' + e.message); }
   try { const p = await api('/me/player'); add('Now', p?.item ? `${p.item.name} on ${p.device?.name} (${p.is_playing ? 'playing' : 'paused'})` : 'nothing'); } catch (e) { add('Now', 'error ' + e.message); }
-  add('Settings', JSON.stringify(CFG.audio));
+  add('Settings', JSON.stringify(CFG.audio) + ` · mode=${playMode()} · refused=${engineRefused()} · spotifyApp=${S.appInstalled ? 'installed' : 'not found'}`);
   if (IS_APP) { try { lines.push('--- engine log ---', ...(await window.amplite.engineLogs())); } catch {} }
   const text = lines.join('\n');
   try { await navigator.clipboard.writeText(text); toast('Diagnostics copied — paste them to whoever is helping you.'); }
@@ -367,6 +409,13 @@ const audioOpts = () => ({ volume: Math.round(S.volume * 100), bitrate: CFG.audi
 let audioT;
 function applyAudio() {
   if (!IS_APP) return;
+  if (S.lastMode !== playMode()) {
+    S.lastMode = playMode();
+    if (playMode() === 'engine') window.amplite.engineStart(audioOpts()); else window.amplite.engineStop();
+    renderEngine(); updatePlayerUI();
+    if (S.now && !S.now.paused) playHere();
+    return;
+  }
   clearTimeout(audioT);
   audioT = setTimeout(() => { window.amplite.engineConfig(audioOpts()); toast('Applying audio settings…'); }, 400);
 }
@@ -382,13 +431,22 @@ function initEngine() {
       const prob = accountProblem();
       if (prob?.kind === 'mismatch') { toast('The audio engine is signed into a different Spotify account.'); openSettings('audio'); }
     }
+    if (st.keyRefused && CFG.audio.source === 'auto' && !engineRefused() && S.me?.id && (!st.user || st.user.toLowerCase() === S.me.id.toLowerCase())) {
+      store.set(refusedKey(), true);
+      toast('Spotify won’t let the built-in engine play for this account — switching to the Spotify app.');
+      window.amplite.engineStop();
+      if (S.now && S.now.device === st.name) playHere();
+    }
     if (st.state === 'missing') initSDK();
     renderEngine(); updatePlayerUI();
   });
+  S.lastMode = playMode();
+  window.amplite.spotifyApp('check').then(i => { S.appHost = i.host; S.appInstalled = i.installed; if (useApp()) findSpotifyApp().then(() => { renderEngine(); updatePlayerUI(); }); });
   window.amplite.engineStatus().then(st => {
     S.engine = st;
     if (st.state === 'missing') { initSDK(); return; }
-      window.amplite.engineStart(audioOpts());
+    if (playMode() === 'engine') window.amplite.engineStart(audioOpts());
+    renderEngine();
   });
 }
 
@@ -528,14 +586,14 @@ function updatePlayerUI() {
   A.dev.textContent = n?.device || 'stereo';
 
   const dev = $('#deviceBtn');
-  const onEngine = useEngine() && n?.device === S.engine?.name;
-  const canHere = useEngine() ? S.engine?.state === 'ready' : !!S.deviceId;
+  const onEngine = (useEngine() && n?.device === S.engine?.name) || (useApp() && !!n && n.device === S.appDeviceName);
+  const canHere = useApp() ? true : useEngine() ? S.engine?.state === 'ready' : !!S.deviceId;
   if (n?.source === 'remote' && !onEngine) {
     dev.classList.remove('hidden');
     dev.textContent = `On ${n.device}${canHere ? ' · Play here' : ''}`;
     dev.disabled = !canHere;
   } else dev.classList.add('hidden');
-  const kb = $('#ampKbps', ampEl); if (kb) kb.textContent = onEngine ? String(S.engine.streamKbps || S.engine.bitrate) : (n?.source === 'sdk' ? '256' : '---');
+  const kb = $('#ampKbps', ampEl); if (kb) kb.textContent = onEngine && useEngine() ? String(S.engine.streamKbps || S.engine.bitrate) : (n?.source === 'sdk' ? '256' : '---');
   const aa = A.art; if (aa && (n?.album?.image || '') !== aa.getAttribute('src')) aa.setAttribute('src', n?.album?.image || '');
 
   if ((n?.uri || null) !== S.likedUri) checkLiked(n?.uri || null);
@@ -1132,7 +1190,11 @@ function settingsHTML() {
       + (IS_APP ? grp('Window', rng('amp.opacity', 'Opacity', 40, 100, 5, '%') + sw('amp.onTop', 'Always on top')) : '')
       + grp('Reset', `<div class="set-row"><div class="lbl">Restore the default mini amp</div><button class="btn ctl" id="ampReset">Reset</button></div>`),
     audio: grp('Audio engine', `<div class="engine-line" id="engineLine"></div>`)
-      + grp('Quality',
+      + grp('Playback source',
+        seg('audio.source', 'Play audio with', [['auto', 'Automatic'], ['engine', 'Amplite engine'], ['app', 'Spotify app']],
+          'Automatic uses the built-in engine, and switches to the Spotify desktop app if Spotify refuses the engine for your account')
+        + `<div class="set-row"><div class="lbl">Retry the built-in engine<small>Clears the “refused” flag for this account and tries the engine again</small></div><button class="btn ctl" id="engRetry">Retry</button></div>`)
+      + grp('Quality (built-in engine)',
         seg('audio.bitrate', 'Streaming quality', [[320, 'Very high · 320'], [160, 'High · 160'], [96, 'Normal · 96']], 'kbps Ogg Vorbis. Very high needs Premium', true)
         + sw('audio.normalise', 'Normalize volume', 'Keeps loudness consistent between songs'))
       + grp('Troubleshooting', `<div class="set-row"><div class="lbl">Restart audio engine<small>Try this if playback stops responding</small></div><button class="btn ctl" id="engRestart">Restart</button></div>
@@ -1222,7 +1284,8 @@ function bindSettings(root) {
     if (e.target.closest('#engRestart')) { window.amplite.engineRestart(); toast('Restarting audio engine…'); return; }
     if (e.target.closest('#engRelink')) { window.amplite.engineRestart({ forget: true }); toast('Re-linking — approve Amplite in your browser.'); return; }
     if (e.target.closest('#aboutUpd')) { $('#updBtn').click(); return; }
-    if (e.target.closest('#engDiag')) { copyDiagnostics(); }
+    if (e.target.closest('#engDiag')) { copyDiagnostics(); return; }
+    if (e.target.closest('#engRetry')) { store.del(refusedKey()); S.lastMode = playMode(); window.amplite.engineRestart(); renderEngine(); updatePlayerUI(); toast('Trying the built-in engine again…'); }
   });
   root.addEventListener('change', e => {
     const el = e.target;

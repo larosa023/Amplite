@@ -157,6 +157,31 @@ ipcMain.handle('engine-logs', () => engine.logs.slice(-120));
 ipcMain.on('engine-start', (_e, opts) => { engine.configure(typeof opts === 'number' ? { volume: opts } : opts || {}); engine.start(); });
 ipcMain.on('engine-config', (_e, opts) => { if (engine.configure(opts || {})) engine.restart(); });
 ipcMain.on('engine-restart', (_e, opts) => engine.restart(opts || {}));
+ipcMain.on('engine-stop', () => engine.stop());
+
+/* ---------------- official Spotify app (fallback playback) ---------------- */
+// Used when Spotify refuses the engine's audio keys for an account: Amplite starts the
+// regular Spotify desktop app minimised and sends playback to it over Spotify Connect.
+function findSpotifyExe() {
+  const env = process.env;
+  const c = process.platform === 'win32'
+    ? [path.join(env.APPDATA || '', 'Spotify', 'Spotify.exe'), path.join(env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps', 'Spotify.exe')]
+    : process.platform === 'darwin' ? ['/Applications/Spotify.app/Contents/MacOS/Spotify'] : ['/usr/bin/spotify', '/snap/bin/spotify'];
+  return c.find(p => { try { fs.accessSync(p); return true; } catch { return false; } });
+}
+ipcMain.handle('spotify-app', async (_e, action) => {
+  const exe = findSpotifyExe();
+  if (action === 'check') return { installed: !!exe, host: require('os').hostname() };
+  try {
+    if (exe) {
+      const { spawn } = require('child_process');
+      spawn(exe, ['--minimized'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      return { ok: true, how: 'exe' };
+    }
+    await shell.openExternal('spotify:');
+    return { ok: true, how: 'protocol' };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 
 /* ---------------- auto-update (GitHub Releases) ---------------- */
 let autoUpdater = null;
