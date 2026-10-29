@@ -39,7 +39,7 @@ npm start            # run in development
 npm run dist         # Windows installer → dist/
 ```
 
-Pushing a tag such as `v1.0.1` builds the installer on GitHub Actions and attaches it to a Release. You can also run the **Build Windows app** workflow by hand from the Actions tab.
+Every push to `main` builds the installer on GitHub Actions and publishes it as a Release (bump `version` in package.json for a new one). You can also run the **Build Windows app** workflow by hand from the Actions tab.
 
 ## Spotify limits (2026)
 
