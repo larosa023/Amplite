@@ -1350,11 +1350,12 @@ function startViz() {
   const id = ++vizId; vizRunning = true;
   const win = S.ampWin || window;
   let lastFrame = performance.now();
-  const step = t => {
+  V.lastFrame = V.lastTxt = V.lastMarq = V.lastT = 0; // fresh timers for the new loop
+  const step = () => {
     if (id !== vizId) return;
     if (!vizWanted()) { vizRunning = false; return; } // stop the loop entirely when nobody's looking
     lastFrame = performance.now();
-    drawAmp(t);
+    drawAmp();
     win.requestAnimationFrame(step);
   };
   win.requestAnimationFrame(step);
@@ -1362,11 +1363,14 @@ function startViz() {
   // keep the clock, title and visualizer moving with a plain timer.
   const guard = setInterval(() => {
     if (id !== vizId || !vizWanted()) { clearInterval(guard); return; }
-    if (performance.now() - lastFrame > 250) drawAmp(performance.now());
+    if (performance.now() - lastFrame > 250) drawAmp();
   }, 100);
 }
 const SCROLL_MS = { slow: 380, normal: 220, fast: 110 };
-function drawAmp(t) {
+function drawAmp() {
+  // One clock for everything. The amp window has its own clock that starts when it opens, so mixing
+  // its frame timestamps with the main window's time froze the display (it looked "in the past").
+  const t = performance.now();
   const c = CFG.amp;
   if (t - V.lastFrame < 1000 / (c.fps || 30) - 2) return;
   V.lastFrame = t;
