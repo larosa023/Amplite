@@ -7,7 +7,6 @@ const path = require('path');
 const { app } = require('electron');
 
 const DEVICE_NAME = 'Amplite';
-const BITRATE = '320';
 
 class Engine {
   constructor(send) {
@@ -18,6 +17,16 @@ class Engine {
     this.restarts = 0;
     this.quitting = false;
     this.volume = 60;
+    this.bitrate = 320;      // 96 | 160 | 320 kbps
+    this.normalise = false;
+  }
+
+  configure({ volume, bitrate, normalise } = {}) {
+    if (Number.isFinite(volume)) this.volume = Math.max(0, Math.min(100, Math.round(volume)));
+    const changed = (bitrate && bitrate !== this.bitrate) || (normalise !== undefined && !!normalise !== this.normalise);
+    if ([96, 160, 320].includes(bitrate)) this.bitrate = bitrate;
+    if (normalise !== undefined) this.normalise = !!normalise;
+    return changed;
   }
 
   get bin() {
@@ -34,10 +43,10 @@ class Engine {
 
   set(state, detail = '') {
     this.state = state; this.detail = detail;
-    this.send({ state, detail, name: DEVICE_NAME, bitrate: +BITRATE, hasLogin: this.hasLogin });
+    this.send(this.status());
   }
 
-  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: +BITRATE, hasLogin: this.hasLogin }; }
+  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin }; }
 
   start() {
     if (this.proc) return;
@@ -47,7 +56,7 @@ class Engine {
     const args = [
       '--name', DEVICE_NAME,
       '--device-type', 'computer',
-      '--bitrate', BITRATE,
+      '--bitrate', String(this.bitrate),
       '--format', 'F32',
       '--backend', 'rodio',
       '--cache', this.cacheDir,
@@ -59,13 +68,14 @@ class Engine {
       '--enable-oauth',
       '--oauth-port', '5588',
     ];
+    if (this.normalise) args.push('--enable-volume-normalisation');
     this.set('starting', this.hasLogin ? 'Connecting…' : 'Waiting for one-time approval');
     const p = spawn(bin, args, { windowsHide: true, env: { ...process.env, RUST_LOG: 'info' } });
     this.proc = p;
     const onLine = line => {
       if (!line.trim()) return;
       if (/Browse to:/i.test(line)) this.set('auth', 'Approve Amplite in your browser (one time only)');
-      else if (/Authenticated as/i.test(line)) { this.restarts = 0; this.set('ready', 'Ready · 320 kbps'); }
+      else if (/Authenticated as/i.test(line)) { this.restarts = 0; this.set('ready', `Ready · ${this.bitrate} kbps`); }
       else if (/Premium/i.test(line) && /required|not/i.test(line)) this.set('error', 'Spotify Premium is required for playback');
       else if (/Failed to get Spotify access token|Bad credentials|Login failed/i.test(line)) this.set('error', line.replace(/^.*?\]\s*/, '').slice(0, 160));
       if (process.env.AMPLITE_ENGINE_DEBUG) console.log('[engine]', line);

@@ -40,6 +40,33 @@ const store = {
   del(k) { try { localStorage.removeItem('amplite:' + k); } catch {} },
 };
 
+/* ---------------- settings ---------------- */
+const AMP_DEFAULTS = {
+  skin: 'theme', colors: { frame: '#2c2c38', frameHi: '#55556a', lcd: '#000000', text: '#00e800', lo: '#00c000', mid: '#e8e800', hi: '#ff2a00', btn: '#d8d8e0', label: '#9a9aa8' },
+  scale: 1.1, width: 'normal', corners: 'soft', font: 'mono', glow: true,
+  viz: 'bars', bars: 19, fps: 30,
+  art: false, title: true, marquee: true, meta: true, vol: true, seek: true, controls: true, toggles: true,
+  scroll: 'normal', time: 'elapsed', opacity: 100, onTop: true,
+};
+const DEFAULTS = { ui: { sideMin: false, lite: false }, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false } };
+const clone = o => JSON.parse(JSON.stringify(o));
+const CFG = (() => {
+  const saved = store.get('cfg', {}) || {}, c = clone(DEFAULTS);
+  for (const k of Object.keys(c)) Object.assign(c[k], saved[k] || {});
+  c.amp.colors = { ...AMP_DEFAULTS.colors, ...(saved.amp?.colors || {}) };
+  return c;
+})();
+const getK = k => k.split('.').reduce((o, p) => o?.[p], CFG);
+function setK(k, v) {
+  const parts = k.split('.'), last = parts.pop();
+  parts.reduce((o, p) => o[p], CFG)[last] = v;
+  store.set('cfg', CFG);
+  if (k.startsWith('amp.')) applyAmp();
+  else if (k.startsWith('ui.')) applyUI();
+  else if (k.startsWith('audio.')) applyAudio();
+  syncControls();
+}
+
 const ICONS = {
   play: ['M8 5.5v13l11-6.5z'], pause: ['M6.5 5h4v14h-4zM13.5 5h4v14h-4z'],
   next: ['M5 6l9 6-9 6zM16 6h2.5v12H16z'], prev: ['M19 6l-9 6 9 6zM5.5 6H8v12H5.5z'], stop: ['M6 6h12v12H6z'],
@@ -58,6 +85,8 @@ const ICONS = {
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 10l-2 2 2 2"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
 };
 const svg = n => {
@@ -132,10 +161,17 @@ function logout() {
 }
 
 /* ---------------- Web API ---------------- */
+const apiCache = new Map(); // url -> { t, data }  (GET responses, 2 min)
+const cacheable = (method, url) => method === 'GET' && !/\/me\/player|\/contains/.test(url);
+const purgeCache = re => { for (const k of apiCache.keys()) if (re.test(k)) apiCache.delete(k); };
 async function api(path, { method = 'GET', body, query } = {}, retry = true) {
-  const token = await getToken();
   let url = path.startsWith('http') ? path : 'https://api.spotify.com/v1' + path;
   if (query) url += (url.includes('?') ? '&' : '?') + new URLSearchParams(query);
+  if (cacheable(method, url)) {
+    const hit = apiCache.get(url);
+    if (hit && Date.now() - hit.t < 120000) return hit.data;
+  }
+  const token = await getToken();
   const r = await fetch(url, {
     method,
     headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -155,6 +191,7 @@ async function api(path, { method = 'GET', body, query } = {}, retry = true) {
     const e = new Error(data?.error?.message || `Spotify error ${r.status}`);
     e.status = r.status; e.reason = data?.error?.reason; throw e;
   }
+  if (cacheable(method, url)) apiCache.set(url, { t: Date.now(), data });
   return data;
 }
 
@@ -286,38 +323,38 @@ async function target() {
   }
   return S.deviceId || undefined;
 }
+// Engine status now lives in Settings → Audio (kept out of the player bar).
 function renderEngine() {
-  const e = S.engine, chip = $('#engineChip');
-  if (!chip) return;
-  if (!e || e.state === 'missing') { chip.classList.add('hidden'); return; }
-  chip.classList.remove('hidden');
-  chip.className = 'engine-chip ' + e.state;
-  const onEngine = S.now?.device === e.name && S.now?.source === 'remote';
-  chip.textContent = e.state === 'ready' ? (onEngine ? `${e.bitrate} kbps` : `${e.bitrate} kbps · ready`)
-    : e.state === 'auth' ? 'Approve in browser' : e.state === 'error' ? 'Engine error' : 'Engine starting…';
-  chip.title = e.detail || '';
+  const el = $('#engineLine'); if (!el) return;
+  const e = S.engine;
+  const label = !e ? 'Checking…' : e.state === 'missing' ? 'Not included in this build — using Spotify’s web player'
+    : e.state === 'ready' ? `Ready · streaming at ${e.bitrate} kbps` : e.state === 'auth' ? 'Waiting for one-time approval in your browser'
+    : e.state === 'error' ? 'Error: ' + (e.detail || 'unknown') : /restart/i.test(e.detail || '') ? 'Restarting…' : 'Starting…';
+  el.className = 'engine-line ' + (e?.state || '');
+  el.innerHTML = `<span class="dot"></span><span>${esc(label)}</span>`;
+}
+const audioOpts = () => ({ volume: Math.round(S.volume * 100), bitrate: CFG.audio.bitrate, normalise: CFG.audio.normalise });
+let audioT;
+function applyAudio() {
+  if (!IS_APP) return;
+  clearTimeout(audioT);
+  audioT = setTimeout(() => { window.amplite.engineConfig(audioOpts()); toast('Applying audio settings…'); }, 400);
 }
 function initEngine() {
   window.amplite.onEngine(st => {
     const was = S.engine?.state;
     S.engine = st;
-    if (st.state === 'ready' && was !== 'ready') { S.engineId = null; findEngine(8).then(() => { renderEngine(); poll(); }); }
+    if (st.state === 'ready' && was !== 'ready') { S.engineId = null; findEngine(8).then(() => poll()); }
     if (st.state === 'auth' && was !== 'auth') toast('One-time step: approve Amplite in the browser window that just opened.');
+    if (st.state === 'error' && was !== 'error') toast('Audio engine problem — see Settings → Audio.');
     if (st.state === 'missing') initSDK();
     renderEngine(); updatePlayerUI();
   });
   window.amplite.engineStatus().then(st => {
     S.engine = st;
     if (st.state === 'missing') { initSDK(); return; }
-    renderEngine();
-    window.amplite.engineStart(Math.round(S.volume * 100));
+      window.amplite.engineStart(audioOpts());
   });
-  $('#engRestartBtn').onclick = () => { window.amplite.engineRestart(); toast('Restarting audio engine…'); };
-  $('#engForgetBtn').onclick = () => { window.amplite.engineRestart({ forget: true }); toast('Re-linking — approve Amplite in your browser.'); };
-  $('#engineChip').onclick = () => {
-    if (S.engine?.state === 'error') window.amplite.engineRestart();
-    else if (S.engine?.state === 'ready' && S.now && S.now.device !== S.engine.name) playHere();
-  };
 }
 
 /* ---------------- playback controls ---------------- */
@@ -424,6 +461,7 @@ async function toggleLike() {
   try {
     try { await api('/me/library', { method, query: { uris: uri } }); }
     catch (e) { if (e.status !== 404 && e.status !== 405) throw e; await api('/me/tracks', { method, query: { ids: uri.split(':')[2] } }); }
+    purgeCache(/\/me\/tracks/);
     toast(was ? 'Removed from Liked Songs' : 'Added to Liked Songs');
   } catch (e) { S.liked = was; renderLike(); toast(e.message); }
 }
@@ -463,7 +501,7 @@ function updatePlayerUI() {
     dev.disabled = !canHere;
   } else dev.classList.add('hidden');
   const kb = $('#ampKbps', ampEl); if (kb) kb.textContent = onEngine ? String(S.engine.bitrate) : (n?.source === 'sdk' ? '256' : '---');
-  renderEngine();
+  const aa = A.art; if (aa && (n?.album?.image || '') !== aa.getAttribute('src')) aa.setAttribute('src', n?.album?.image || '');
 
   if ((n?.uri || null) !== S.likedUri) checkLiked(n?.uri || null);
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
@@ -480,6 +518,7 @@ function markPlaying() {
   if (uri) $$(`.trow[data-uri="${CSS.escape(uri)}"]`).forEach(r => r.classList.add('playing'));
 }
 function tickBar() {
+  if (document.hidden) return;
   const n = S.now, d = n?.duration || 0, p = pos();
   if (!S.seeking) { $('#tCur').textContent = fmt(p); setRange($('#seek'), d ? p / d : 0); }
   $('#tDur').textContent = fmt(d);
@@ -701,7 +740,7 @@ function renderThemes() {
 const ampEl = $('#amp');
 const A = {
   time: $('#ampTime', ampEl), state: $('#ampState', ampEl), marq: $('#ampMarq', ampEl), viz: $('#ampViz', ampEl),
-  seek: $('#ampSeek', ampEl), vol: $('#ampVol', ampEl), dev: $('#ampDev', ampEl),
+  seek: $('#ampSeek', ampEl), vol: $('#ampVol', ampEl), dev: $('#ampDev', ampEl), art: $('#ampArt', ampEl),
   shuf: $('[data-amp="shuffle"]', ampEl), rep: $('[data-amp="repeat"]', ampEl),
 };
 const ampOpen = () => !!S.ampWin || S.ampMode === 'inline';
@@ -752,9 +791,7 @@ async function openPip() {
   w.addEventListener('pagehide', onAmpWinClosed);
   if (IS_APP) {
     // Fit the window to the amp, then tuck the main window away.
-    await new Promise(r => w.requestAnimationFrame(r));
-    const r = ampEl.getBoundingClientRect();
-    try { w.resizeTo(Math.ceil(r.width), Math.ceil(r.height)); } catch {}
+    await fitAmp();
     window.amplite.setMainVisible(false);
   }
   startViz();
@@ -763,6 +800,7 @@ async function openPip() {
 setInterval(() => { if (S.ampWin?.closed) onAmpWinClosed(); }, 500);
 
 async function toggleAmp() {
+  closeSettings();
   if (S.ampWin) return S.ampWin.close();
   if (S.ampMode === 'inline') return closeInline();
   if (IS_APP || 'documentPictureInPicture' in window) {
@@ -778,40 +816,108 @@ function ampPopToggle() {
 }
 function ampClose() { if (S.ampWin) S.ampWin.close(); closeInline(); }
 
+/* ---- skins + customisation ---- */
+const SKINS = {
+  theme:   { name: 'Match theme' },
+  classic: { name: 'Classic',   frame: '#2c2c38', frameHi: '#55556a', lcd: '#000000', text: '#00e800', lo: '#00c000', mid: '#e8e800', hi: '#ff2a00', btn: '#d8d8e0', label: '#9a9aa8' },
+  amber:   { name: 'Amber',     frame: '#2a2118', frameHi: '#4a3a28', lcd: '#0d0802', text: '#ffb000', lo: '#ff8c00', mid: '#ffb000', hi: '#ffe08a', btn: '#f3dcb5', label: '#a8906c' },
+  ice:     { name: 'Ice',       frame: '#1b2633', frameHi: '#344a60', lcd: '#03101a', text: '#7fd8ff', lo: '#3aa8ff', mid: '#7fd8ff', hi: '#e0f7ff', btn: '#d8ecff', label: '#7f9bb3' },
+  synth:   { name: 'Synthwave', frame: '#1d1030', frameHi: '#3a2160', lcd: '#0b0414', text: '#ff5ec4', lo: '#7b5cff', mid: '#ff5ec4', hi: '#ffd166', btn: '#f1dcff', label: '#a58cc8' },
+  matrix:  { name: 'Matrix',    frame: '#0f1a0f', frameHi: '#1f331f', lcd: '#000800', text: '#39ff14', lo: '#0f9d0f', mid: '#39ff14', hi: '#caffbf', btn: '#c8f5c8', label: '#6f9a6f' },
+  blood:   { name: 'Crimson',   frame: '#221012', frameHi: '#46202a', lcd: '#0c0203', text: '#ff4d5e', lo: '#a3122a', mid: '#ff4d5e', hi: '#ffc2c8', btn: '#f6d6da', label: '#a8767c' },
+  mono:    { name: 'Mono',      frame: '#e6e6e6', frameHi: '#ffffff', lcd: '#1a1a1a', text: '#f2f2f2', lo: '#8a8a8a', mid: '#cfcfcf', hi: '#ffffff', btn: '#1a1a1a', label: '#6a6a6a' },
+  custom:  { name: 'Custom' },
+};
+const AMP_VARS = { frame: '--amp-frame-x', frameHi: '--amp-frame-hi-x', lcd: '--a-lcd', text: '--a-text', lo: '--a-lo', mid: '--a-mid', hi: '--a-hi', btn: '--a-btn', label: '--a-label' };
+const WIDTHS = { compact: 260, normal: 300, wide: 360, xl: 430 };
+const RADII = { square: '0px', soft: '6px', round: '14px' };
+const BAR_W = 5;
+
+function applyAmp() {
+  const c = CFG.amp, st = ampEl.style;
+  const colors = c.skin === 'custom' ? c.colors : SKINS[c.skin] || {};
+  for (const [k, v] of Object.entries(AMP_VARS)) {
+    if (c.skin !== 'theme' && colors[k]) st.setProperty(v, colors[k]); else st.removeProperty(v);
+  }
+  st.setProperty('--a-zoom', c.scale);
+  st.setProperty('--a-w', (WIDTHS[c.width] || 300) + 'px');
+  st.setProperty('--a-radius', RADII[c.corners] || '6px');
+  const cls = {
+    'show-art': c.art, 'no-title': !c.title, 'no-marquee': !c.marquee, 'no-meta': !c.meta, 'no-vol': !c.vol,
+    'no-seek': !c.seek, 'no-controls': !c.controls, 'no-toggles': !c.toggles, 'viz-off': c.viz === 'off',
+    'f-sans': c.font === 'sans', 'no-glow': !c.glow,
+  };
+  for (const [k, v] of Object.entries(cls)) ampEl.classList.toggle(k, !!v);
+  // Visualiser canvas sized to the bar count.
+  const n = Math.max(6, Math.min(40, c.bars | 0));
+  if (V.h.length !== n) { V.h = new Float32Array(n); V.pk = new Float32Array(n); V.tg = new Float32Array(n); }
+  A.viz.width = n * BAR_W - 1; A.viz.style.width = A.viz.width + 'px';
+  S.ampRemain = c.time === 'remaining';
+  S.vizGrad = null; V.text = ''; V.idle = false;
+  fitAmp();
+}
+// Resize the pop-out window to the amp and apply window options.
+async function fitAmp() {
+  if (!S.ampWin || !IS_APP) return;
+  await new Promise(r => S.ampWin.requestAnimationFrame(r));
+  const r = ampEl.getBoundingClientRect(), z = CFG.amp.scale || 1;
+  // getBoundingClientRect may or may not include CSS zoom depending on the engine; measure both ways.
+  const w = Math.ceil(r.width * (r.width < ampEl.offsetWidth * z - 2 ? z : 1));
+  const h = Math.ceil(r.height * (r.height < ampEl.offsetHeight * z - 2 ? z : 1));
+  try { S.ampWin.resizeTo(w, h); } catch {}
+  window.amplite.ampWindow({ opacity: CFG.amp.opacity / 100, onTop: CFG.amp.onTop });
+}
+
 // Simulated spectrum (Spotify's DRM audio can't be analysed in the browser).
-const V = { h: new Float32Array(19), pk: new Float32Array(19), tg: new Float32Array(19), lastT: 0, lastTxt: 0, lastMarq: 0, off: 0, text: '' };
-let vizId = 0;
+const V = { h: new Float32Array(19), pk: new Float32Array(19), tg: new Float32Array(19), lastT: 0, lastTxt: 0, lastMarq: 0, lastFrame: 0, off: 0, text: '', idle: false };
+let vizId = 0, vizRunning = false;
+const vizWanted = () => ampOpen() || S.ampPreview;
 function startViz() {
-  const id = ++vizId;
+  if (!vizWanted()) return;
+  const id = ++vizId; vizRunning = true;
+  const win = S.ampWin || window;
   const step = t => {
     if (id !== vizId) return;
-    if (ampOpen()) drawAmp(t);
-    (S.ampWin || window).requestAnimationFrame(step);
+    if (!vizWanted()) { vizRunning = false; return; } // stop the loop entirely when nobody's looking
+    drawAmp(t);
+    win.requestAnimationFrame(step);
   };
-  (S.ampWin || window).requestAnimationFrame(step);
+  win.requestAnimationFrame(step);
 }
+const SCROLL_MS = { slow: 380, normal: 220, fast: 110 };
 function drawAmp(t) {
+  const c = CFG.amp;
+  if (t - V.lastFrame < 1000 / (c.fps || 30) - 2) return;
+  V.lastFrame = t;
   const n = S.now, playing = n && !n.paused;
-  if (t - V.lastTxt > 100) {
+  if (t - V.lastTxt > 200) {
     V.lastTxt = t;
     const p = pos(), d = n?.duration || 0;
     A.time.textContent = S.ampRemain && d ? '-' + fmt(d - p, true) : fmt(p, true);
     A.state.textContent = !n ? '■' : n.paused ? '❚❚' : '▶';
     if (!S.ampSeeking) setRange(A.seek, d ? p / d : 0);
   }
-  if (t - V.lastMarq > 220) {
-    V.lastMarq = t;
-    const txt = n ? `${n.artists.map(a => a.name).join(', ')} - ${n.name} (${fmt(n.duration)})   ***   ` : 'AMPLITE   ***   PICK A SONG TO START   ***   ';
-    if (txt !== V.text) { V.text = txt; V.off = 0; } else V.off = (V.off + 1) % txt.length;
-    A.marq.textContent = txt.slice(V.off) + txt.slice(0, V.off);
+  if (c.marquee) {
+    const txt = n ? `${n.artists.map(a => a.name).join(', ')} - ${n.name} (${fmt(n.duration)})` : 'AMPLITE  ·  PICK A SONG TO START';
+    if (c.scroll === 'static') { if (txt !== V.text) { V.text = txt; A.marq.textContent = txt; } }
+    else if (t - V.lastMarq > (SCROLL_MS[c.scroll] || 220)) {
+      V.lastMarq = t;
+      const full = txt + '   ***   ';
+      if (full !== V.text) { V.text = full; V.off = 0; } else V.off = (V.off + 1) % full.length;
+      A.marq.textContent = full.slice(V.off) + full.slice(0, V.off);
+    }
   }
-  const c = A.viz, x = c.getContext('2d'), W = c.width, H = c.height, N = V.h.length;
+  if (c.viz === 'off') return;
+  const N = V.h.length;
+  // Nothing moving and nothing to decay: skip the canvas work.
+  if (!playing && V.idle) return;
+  const cv = A.viz, x = cv.getContext('2d'), W = cv.width, H = cv.height;
   if (!S.vizGrad) {
     const cs = ampEl.ownerDocument.defaultView.getComputedStyle(ampEl), g = x.createLinearGradient(0, H, 0, 0);
-    g.addColorStop(0, cs.getPropertyValue('--viz-lo').trim() || '#0c0');
-    g.addColorStop(0.6, cs.getPropertyValue('--viz-mid').trim() || '#ee0');
-    g.addColorStop(1, cs.getPropertyValue('--viz-hi').trim() || '#f20');
-    S.vizGrad = g; S.vizPeak = cs.getPropertyValue('--amp-lcd-text').trim() || '#fff';
+    g.addColorStop(0, cs.getPropertyValue('--a-lo').trim() || '#0c0');
+    g.addColorStop(0.6, cs.getPropertyValue('--a-mid').trim() || '#ee0');
+    g.addColorStop(1, cs.getPropertyValue('--a-hi').trim() || '#f20');
+    S.vizGrad = g; S.vizPeak = cs.getPropertyValue('--a-text').trim() || '#fff';
   }
   if (playing && t - V.lastT > 70) {
     V.lastT = t;
@@ -821,14 +927,34 @@ function drawAmp(t) {
       V.tg[i] = Math.min(1, Math.max(0.04, 0.55 - 0.35 * f + (Math.random() - 0.4) * 0.45 * (1 - f * 0.4) + beat * (0.45 - 0.35 * f) + 0.12 * Math.sin(s * 3 + i)));
     }
   }
-  x.clearRect(0, 0, W, H);
+  let energy = 0;
   for (let i = 0; i < N; i++) {
-    V.h[i] += playing ? (V.tg[i] - V.h[i]) * 0.3 : -V.h[i] * 0.08;
+    V.h[i] += playing ? (V.tg[i] - V.h[i]) * 0.3 : -V.h[i] * 0.12;
     V.pk[i] = V.h[i] > V.pk[i] ? V.h[i] : Math.max(0, V.pk[i] - 0.008);
-    const bh = Math.round(V.h[i] * H), px = i * 5;
-    x.fillStyle = S.vizGrad;
-    for (let y = H - 1; y >= H - bh; y -= 2) x.fillRect(px, y, 4, 1);
-    if (V.pk[i] > 0.02) { x.fillStyle = S.vizPeak; x.fillRect(px, H - 1 - Math.round(V.pk[i] * (H - 1)), 4, 1); }
+    energy += V.h[i] + V.pk[i];
+  }
+  V.idle = !playing && energy < 0.01;
+  x.clearRect(0, 0, W, H);
+  if (c.viz === 'scope') {
+    x.strokeStyle = S.vizGrad; x.lineWidth = 1.5; x.beginPath();
+    const ph = t / 180;
+    for (let px = 0; px <= W; px += 2) {
+      const i = Math.min(N - 1, Math.floor(px / W * N)), a = V.h[i] * H * 0.45;
+      const y = H / 2 + Math.sin(px / 4 + ph) * a * Math.cos(px / 17 - ph / 3);
+      px ? x.lineTo(px, y) : x.moveTo(px, y);
+    }
+    x.stroke();
+    return;
+  }
+  for (let i = 0; i < N; i++) {
+    const bh = Math.round(V.h[i] * H), px = i * BAR_W;
+    if (c.viz !== 'peaks') {
+      x.fillStyle = S.vizGrad;
+      if (c.viz === 'solid') x.fillRect(px, H - bh, BAR_W - 1, bh);
+      else if (c.viz === 'mirror') { const hh = Math.round(bh / 2); for (let y = 0; y < hh; y += 2) { x.fillRect(px, H / 2 - 1 - y, BAR_W - 1, 1); x.fillRect(px, H / 2 + y, BAR_W - 1, 1); } }
+      else for (let y = H - 1; y >= H - bh; y -= 2) x.fillRect(px, y, BAR_W - 1, 1);
+    }
+    if (c.viz !== 'mirror' && V.pk[i] > 0.02) { x.fillStyle = S.vizPeak; x.fillRect(px, H - 1 - Math.round(V.pk[i] * (H - 1)), BAR_W - 1, c.viz === 'peaks' ? 2 : 1); }
   }
 }
 
@@ -836,6 +962,9 @@ function drawAmp(t) {
 function onKey(e) {
   const tag = e.target?.tagName;
   if ((tag === 'INPUT' && e.target.type !== 'range') || tag === 'TEXTAREA') return;
+  if (e.key === 'Escape' && !$('#settings').classList.contains('hidden')) { closeSettings(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleSidebar(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); openSettings(); return; }
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   else if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight') { e.preventDefault(); next(); }
   else if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
@@ -845,6 +974,9 @@ function onKey(e) {
 
 function bind() {
   $('#loginBtn').onclick = login;
+  $('#sideToggle').onclick = toggleSidebar;
+  $('#settingsBtn').onclick = e => { e.stopPropagation(); openSettings(); };
+  $('#settingsMenuBtn').onclick = e => { e.stopPropagation(); openSettings(); };
   $('#logoutBtn').onclick = logout;
   $('#backBtn').onclick = goBack;
   $('#fwdBtn').onclick = goFwd;
@@ -912,6 +1044,162 @@ function bind() {
   A.vol.oninput = () => setVolume(A.vol.value / 100);
 }
 
+/* ---------------- UI prefs (sidebar, lite mode) ---------------- */
+function applyUI() {
+  $('#app').classList.toggle('side-min', !!CFG.ui.sideMin);
+  document.documentElement.classList.toggle('lite', !!CFG.ui.lite);
+  const t = $('#sideToggle'); if (t) t.title = (CFG.ui.sideMin ? 'Expand' : 'Collapse') + ' sidebar (Ctrl+B)';
+}
+const toggleSidebar = () => setK('ui.sideMin', !CFG.ui.sideMin);
+
+/* ---------------- settings panel ---------------- */
+// Small declarative builders: every control carries data-k="<config key>" and is kept in sync by syncControls().
+const sw = (k, label, hint = '') => `<div class="set-row"><div class="lbl">${label}${hint ? `<small>${hint}</small>` : ''}</div>
+  <label class="switch ctl"><input type="checkbox" data-k="${k}" data-type="bool" aria-label="${label}"></label></div>`;
+const seg = (k, label, opts, hint = '', num = false) => `<div class="set-row"><div class="lbl">${label}${hint ? `<small>${hint}</small>` : ''}</div>
+  <div class="seg ctl" data-k="${k}" data-type="${num ? 'num' : 'str'}">${opts.map(([v, t]) => `<button data-v="${v}">${t}</button>`).join('')}</div></div>`;
+const rng = (k, label, min, max, step, unit = '', hint = '') => `<div class="set-row"><div class="lbl">${label}${hint ? `<small>${hint}</small>` : ''}</div>
+  <div class="ctl"><input class="set-range" type="range" min="${min}" max="${max}" step="${step}" data-k="${k}" data-type="num"><span class="set-val" data-val="${k}" data-unit="${unit}"></span></div></div>`;
+const grp = (title, body) => `<section class="set-group"><h3>${title}</h3>${body}</section>`;
+
+function settingsHTML() {
+  const skinBtns = Object.entries(SKINS).map(([id, s]) => {
+    const sty = id === 'theme' ? 'background:var(--amp-lcd);color:var(--amp-lcd-text)'
+      : id === 'custom' ? `background:${CFG.amp.colors.lcd};color:${CFG.amp.colors.text}`
+      : `background:${s.lcd};color:${s.text};box-shadow:inset 0 0 0 3px ${s.frame}`;
+    return `<button class="skin" data-skin="${id}"><i style="${sty}">01:23</i>${s.name}</button>`;
+  }).join('');
+  const colorInputs = [['frame', 'Frame'], ['frameHi', 'Frame shine'], ['lcd', 'Screen'], ['text', 'Text'], ['lo', 'Bars low'], ['mid', 'Bars mid'], ['hi', 'Bars high'], ['btn', 'Buttons'], ['label', 'Labels']]
+    .map(([k, t]) => `<label>${t}<input type="color" data-color="${k}"></label>`).join('');
+  return {
+    general: grp('Layout', sw('ui.sideMin', 'Collapse sidebar', 'Icons only. Shortcut: Ctrl+B'))
+      + grp('Performance', sw('ui.lite', 'Lite mode', 'Turns off animations, blur and shadows to save CPU/GPU'))
+      + grp('Theme', `<div class="theme-list" id="setThemes"></div>`),
+    amp: `<div class="amp-preview" id="ampPreview"><p class="muted" id="ampPreviewNote" style="font-size:12px"></p></div>`
+      + grp('Skin', `<div class="skins">${skinBtns}</div><div class="colors" id="ampColors" ${CFG.amp.skin === 'custom' ? '' : 'hidden'}>${colorInputs}</div>`)
+      + grp('Size & shape',
+        rng('amp.scale', 'Size', 0.8, 2, 0.05, '×')
+        + seg('amp.width', 'Width', [['compact', 'Compact'], ['normal', 'Normal'], ['wide', 'Wide'], ['xl', 'Extra wide']])
+        + seg('amp.corners', 'Corners', [['square', 'Square'], ['soft', 'Soft'], ['round', 'Round']])
+        + seg('amp.font', 'Display font', [['mono', 'Digital'], ['sans', 'Clean']])
+        + sw('amp.glow', 'Screen glow'))
+      + grp('Visualizer',
+        seg('amp.viz', 'Style', [['bars', 'Segments'], ['solid', 'Solid'], ['peaks', 'Peaks'], ['mirror', 'Mirror'], ['scope', 'Wave'], ['off', 'Off']])
+        + rng('amp.bars', 'Bars', 6, 40, 1)
+        + seg('amp.fps', 'Frame rate', [[15, '15'], [30, '30'], [60, '60']], 'Lower uses less CPU', true))
+      + grp('Show',
+        sw('amp.art', 'Album art') + sw('amp.title', 'Title bar', 'Hide it for a borderless look (drag the screen to move)')
+        + sw('amp.marquee', 'Song title') + sw('amp.meta', 'Bitrate / device line') + sw('amp.vol', 'Volume slider')
+        + sw('amp.seek', 'Seek bar') + sw('amp.controls', 'Playback buttons') + sw('amp.toggles', 'Shuffle / repeat'))
+      + grp('Text',
+        seg('amp.scroll', 'Title scrolling', [['static', 'Off'], ['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']])
+        + seg('amp.time', 'Clock shows', [['elapsed', 'Elapsed'], ['remaining', 'Remaining']]))
+      + (IS_APP ? grp('Window', rng('amp.opacity', 'Opacity', 40, 100, 5, '%') + sw('amp.onTop', 'Always on top')) : '')
+      + grp('Reset', `<div class="set-row"><div class="lbl">Restore the default mini amp</div><button class="btn ctl" id="ampReset">Reset</button></div>`),
+    audio: grp('Audio engine', `<div class="engine-line" id="engineLine"></div>`)
+      + grp('Quality',
+        seg('audio.bitrate', 'Streaming quality', [[320, 'Very high · 320'], [160, 'High · 160'], [96, 'Normal · 96']], 'kbps Ogg Vorbis. Very high needs Premium', true)
+        + sw('audio.normalise', 'Normalize volume', 'Keeps loudness consistent between songs'))
+      + grp('Troubleshooting', `<div class="set-row"><div class="lbl">Restart audio engine<small>Try this if playback stops responding</small></div><button class="btn ctl" id="engRestart">Restart</button></div>
+        <div class="set-row"><div class="lbl">Re-link audio engine<small>Signs the engine in again through your browser</small></div><button class="btn ctl" id="engRelink">Re-link</button></div>`),
+    about: `<div class="about-logo"><span class="logo" data-logo></span><div><b>Amplite</b><span class="muted" id="aboutVer"></span></div></div>`
+      + (IS_APP ? grp('Updates', `<div class="set-row"><div class="lbl">Check for updates<small>Amplite also checks automatically</small></div><button class="btn ctl" id="aboutUpd">Check now</button></div>`) : '')
+      + grp('Keyboard shortcuts', [['Space', 'Play / pause'], ['Ctrl + ← / →', 'Previous / next'], ['M', 'Mini amp'], ['/', 'Search'], ['Ctrl + B', 'Collapse sidebar'], ['Ctrl + ,', 'Settings'], ['Esc', 'Close settings']]
+        .map(([k, t]) => `<div class="set-row"><div class="lbl">${t}</div><kbd>${k}</kbd></div>`).join('')),
+  };
+}
+
+function syncControls() {
+  const root = $('#setPanes'); if (!root || !root.childElementCount) return;
+  $$('[data-k]', root).forEach(el => {
+    const v = getK(el.dataset.k);
+    if (el.classList.contains('seg')) $$('button', el).forEach(b => b.classList.toggle('on', String(v) === b.dataset.v));
+    else if (el.type === 'checkbox') el.checked = !!v;
+    else if (el.type === 'range') el.value = v;
+  });
+  $$('[data-val]', root).forEach(el => {
+    const v = getK(el.dataset.val), u = el.dataset.unit;
+    el.textContent = u === '×' ? (+v).toFixed(2) + '×' : v + u;
+  });
+  $$('.skin', root).forEach(b => b.classList.toggle('on', b.dataset.skin === CFG.amp.skin));
+  const cols = $('#ampColors'); if (cols) cols.hidden = CFG.amp.skin !== 'custom';
+  $$('[data-color]', root).forEach(i => { i.value = CFG.amp.colors[i.dataset.color]; });
+  $$('#setThemes .theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === document.documentElement.dataset.theme));
+}
+
+function previewAmp(on) {
+  const box = $('#ampPreview');
+  if (on && box && !ampOpen()) {
+    box.prepend(ampEl); S.ampPreview = true; $('#ampPreviewNote').textContent = '';
+    startViz();
+  } else if (on && box) {
+    $('#ampPreviewNote').textContent = 'Your mini amp is open, so changes apply to it live.';
+  } else if (S.ampPreview) {
+    S.ampPreview = false;
+    if (!ampOpen()) $('#ampHost').prepend(ampEl);
+  }
+}
+
+function showTab(tab) {
+  $$('#setTabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $$('.set-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === tab));
+  previewAmp(tab === 'amp');
+  if (tab === 'audio') renderEngine();
+}
+
+function openSettings(tab = 'general') {
+  const panes = $('#setPanes');
+  if (!panes.childElementCount) {
+    const h = settingsHTML();
+    panes.innerHTML = Object.entries(h).map(([id, html]) => `<div class="set-pane" data-pane="${id}">${html}</div>`).join('');
+    $$('[data-logo]', panes).forEach(el => { el.innerHTML = LOGO; });
+    $('#setThemes').innerHTML = $('#themeList').innerHTML;
+    bindSettings(panes);
+  }
+  $('#settings').classList.remove('hidden');
+  $('#themePanel').classList.add('hidden'); $('#userMenu').classList.add('hidden');
+  if (IS_APP) window.amplite.info().then(i => { $('#aboutVer').textContent = ` v${i.version}`; });
+  syncControls();
+  showTab(tab);
+}
+function closeSettings() {
+  if ($('#settings').classList.contains('hidden')) return;
+  $('#settings').classList.add('hidden');
+  previewAmp(false);
+}
+
+function bindSettings(root) {
+  root.addEventListener('click', e => {
+    const segBtn = e.target.closest('.seg button');
+    if (segBtn) { const s = segBtn.parentElement; setK(s.dataset.k, s.dataset.type === 'num' ? +segBtn.dataset.v : segBtn.dataset.v); return; }
+    const skin = e.target.closest('.skin');
+    if (skin) {
+      // Picking "Custom" starts from whatever skin was showing, so it's easy to tweak.
+      if (skin.dataset.skin === 'custom' && CFG.amp.skin !== 'custom' && SKINS[CFG.amp.skin]?.lcd) {
+        const { name, ...cols } = SKINS[CFG.amp.skin]; CFG.amp.colors = { ...CFG.amp.colors, ...cols };
+      }
+      setK('amp.skin', skin.dataset.skin); return;
+    }
+    const th = e.target.closest('#setThemes .theme-opt');
+    if (th) { applyTheme(th.dataset.theme); syncControls(); applyAmp(); return; }
+    if (e.target.closest('#ampReset')) { CFG.amp = clone(AMP_DEFAULTS); store.set('cfg', CFG); applyAmp(); syncControls(); toast('Mini amp reset'); return; }
+    if (e.target.closest('#engRestart')) { window.amplite.engineRestart(); toast('Restarting audio engine…'); return; }
+    if (e.target.closest('#engRelink')) { window.amplite.engineRestart({ forget: true }); toast('Re-linking — approve Amplite in your browser.'); return; }
+    if (e.target.closest('#aboutUpd')) { $('#updBtn').click(); }
+  });
+  root.addEventListener('change', e => {
+    const el = e.target;
+    if (el.dataset.k && el.type === 'checkbox') setK(el.dataset.k, el.checked);
+  });
+  root.addEventListener('input', e => {
+    const el = e.target;
+    if (el.dataset.k && el.type === 'range') setK(el.dataset.k, +el.value);
+    if (el.dataset.color) { CFG.amp.colors[el.dataset.color] = el.value; setK('amp.skin', 'custom'); }
+  });
+  $('#setTabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); };
+  $('#settings').addEventListener('click', e => { if (e.target.id === 'settings' || e.target.closest('[data-close-settings]')) closeSettings(); });
+}
+
 /* ---------------- updates (desktop app) ---------------- */
 const U = { state: 'idle', version: '', manual: false };
 function renderUpdate() {
@@ -970,6 +1258,8 @@ async function boot() {
   $$('[data-logo]').forEach(el => { el.innerHTML = LOGO; });
   renderThemes();
   bind();
+  applyUI();
+  applyAmp();
   syncVolume();
 
   try { await handleCallback(); } catch (e) { return showLogin(e.message); }

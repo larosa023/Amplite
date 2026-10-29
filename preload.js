@@ -11,7 +11,9 @@ contextBridge.exposeInMainWorld('amplite', {
   installUpdate: () => ipcRenderer.send('update-install'),
   onUpdate: cb => ipcRenderer.on('update', (_e, s) => cb(s)),
   engineStatus: () => ipcRenderer.invoke('engine-status'),
-  engineStart: vol => ipcRenderer.send('engine-start', vol),
+  engineStart: opts => ipcRenderer.send('engine-start', opts),
+  engineConfig: opts => ipcRenderer.send('engine-config', opts),
+  ampWindow: opts => ipcRenderer.send('amp-window', opts),
   engineRestart: opts => ipcRenderer.send('engine-restart', opts),
   onEngine: cb => ipcRenderer.on('engine', (_e, s) => cb(s)),
 });

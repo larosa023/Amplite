@@ -5,11 +5,13 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Log in with your Spotify account**: no client secret is stored in the app.
 - **8 themes**: Midnight, Spotify, Classic Amp, Nord, Dracula, Sakura, Ocean, Paper.
 - **Mini Amp**: click **AMP** (or press `M`) and Amplite shrinks into a small, always-on-top retro amp window. Close it to bring the full window back.
+- **Customizable amp** (Settings → Mini Amp): 8 skins plus fully custom colors, size, width, corners, font, glow, 6 visualizer styles, bar count, frame rate, album art, choose which parts to show, title scrolling, opacity and always-on-top.
+- **Collapsible sidebar** (button at the top of the sidebar, or `Ctrl+B`) and a **Lite mode** that turns off effects for lower CPU/GPU use.
 - **Auto-updates**: Amplite checks GitHub Releases, downloads new versions in the background, and shows a restart button in the title bar. You can also use **Check for updates** in the account menu.
 - **Media keys** (play/pause, next, previous) work even when Amplite isn't focused.
 - Home (recently played and your top tracks), search, Liked Songs, playlists, albums and artists.
 - Plays music itself at **320 kbps** through a built-in audio engine, or acts as a remote for Spotify on your other devices.
-- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search.
+- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings.
 
 ## Install
 
@@ -27,8 +29,7 @@ In your app on the [Spotify developer dashboard](https://developer.spotify.com/d
 Amplite plays through a bundled copy of [librespot](https://github.com/librespot-org/librespot), an open-source Spotify Connect engine, at **320 kbps** (Spotify's "Very high" quality) with 32-bit float output.
 
 - **First time only:** when Amplite starts after you log in, your browser opens once to approve the Amplite audio engine. After that the login is cached.
-- The chip next to the volume slider shows the engine's status: **320 kbps** means it's playing through the engine.
-- If something goes wrong, use **Restart audio engine** or **Re-link audio engine** in the account menu.
+- Quality (320 / 160 / 96 kbps), volume normalization and the engine status are in **Settings → Audio**, along with **Restart** and **Re-link** buttons if something goes wrong.
 - Amplite can still control your other Spotify devices (phone, desktop app). Click **Play here** to move playback into Amplite.
 
 librespot is unofficial and Spotify Premium is required. If the engine is missing from a build, Amplite falls back to Spotify's Web Playback SDK.

@@ -12,6 +12,8 @@ const ROOT = path.join(__dirname, 'src');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 
 let mainWin = null;
+let ampWin = null;
+const ampOpts = { opacity: 1, onTop: true };
 const boundsFile = () => path.join(app.getPath('userData'), 'window.json');
 
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -63,6 +65,8 @@ function createMain() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       backgroundThrottling: false, // keep playback + timers running when hidden behind the mini amp
+      spellcheck: false,
+      v8CacheOptions: 'bypassHeatCheck', // cache compiled JS for faster startup
     },
   });
   if (b.maximized) mainWin.maximize();
@@ -88,8 +92,11 @@ function createMain() {
     return { action: 'deny' };
   });
   mainWin.webContents.on('did-create-window', win => {
-    win.setAlwaysOnTop(true, 'floating');
+    ampWin = win;
+    win.setAlwaysOnTop(ampOpts.onTop, 'floating');
+    win.setOpacity(ampOpts.opacity);
     win.setMenu(null);
+    win.on('closed', () => { if (ampWin === win) ampWin = null; });
   });
   // Keep in-app navigation on our origin or Spotify's login pages.
   mainWin.webContents.on('will-navigate', (e, url) => {
@@ -136,12 +143,18 @@ ipcMain.on('main-visibility', (_e, show) => {
   if (show) { mainWin.show(); mainWin.focus(); } else mainWin.hide();
 });
 ipcMain.on('quit', () => app.quit());
+ipcMain.on('amp-window', (_e, o = {}) => {
+  if (typeof o.opacity === 'number') ampOpts.opacity = Math.max(0.3, Math.min(1, o.opacity));
+  if (typeof o.onTop === 'boolean') ampOpts.onTop = o.onTop;
+  if (ampWin && !ampWin.isDestroyed()) { ampWin.setOpacity(ampOpts.opacity); ampWin.setAlwaysOnTop(ampOpts.onTop, 'floating'); }
+});
 
 /* ---------------- audio engine (librespot, 320 kbps) ---------------- */
 const { Engine } = require('./engine');
 const engine = new Engine(st => mainWin?.webContents.send('engine', st));
 ipcMain.handle('engine-status', () => engine.status());
-ipcMain.on('engine-start', (_e, vol) => { if (Number.isFinite(vol)) engine.volume = Math.round(vol); engine.start(); });
+ipcMain.on('engine-start', (_e, opts) => { engine.configure(typeof opts === 'number' ? { volume: opts } : opts || {}); engine.start(); });
+ipcMain.on('engine-config', (_e, opts) => { if (engine.configure(opts || {})) engine.restart(); });
 ipcMain.on('engine-restart', (_e, opts) => engine.restart(opts || {}));
 
 /* ---------------- auto-update (GitHub Releases) ---------------- */
