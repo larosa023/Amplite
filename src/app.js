@@ -1741,7 +1741,7 @@ function settingsHTML() {
         + `<div class="set-row"><div class="lbl">Retry automatic detection<small>Forgets what was refused before and tries the built-in engine, then the web player, again</small></div><button class="btn ctl" id="engRetry">Retry</button></div>`)
       + grp('Equalizer', `<div class="eq-wrap">${eqHTML()}</div>`)
       + grp('Quality (built-in engine)',
-        seg('audio.bitrate', 'Streaming quality', [[320, 'Very high · 320'], [160, 'High · 160'], [96, 'Normal · 96']], 'kbps Ogg Vorbis. Very high needs Premium', true)
+        seg('audio.bitrate', 'Streaming quality', [[320, 'Very high · 320'], [160, 'High · 160'], [96, 'Normal · 96']], 'Higher sounds better and uses more data. Very high needs Premium.', true)
         + sw('audio.normalise', 'Normalize volume', 'Keeps loudness consistent between songs'))
       + grp('Troubleshooting', `<div class="set-row"><div class="lbl">Restart audio engine<small>Try this if playback stops responding</small></div><button class="btn ctl" id="engRestart">Restart</button></div>
         <div class="set-row"><div class="lbl">Re-link audio engine<small>Signs the engine in again through your browser. Make sure the browser is logged into your own Spotify account.</small></div><button class="btn ctl" id="engRelink">Re-link</button></div>

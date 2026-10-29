@@ -1,7 +1,7 @@
 // Amplite audio engine: a bundled librespot (open-source Spotify Connect player).
 // Streams at 320 kbps (Spotify "Very high") and outputs 32-bit float audio.
 // It shows up as the Spotify Connect device "Amplite", and the UI drives it through the Web API.
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -78,9 +78,19 @@ class Engine {
   start() {
     this.wanted = true; this.quitting = false;
     clearTimeout(this.restartTimer);
-    if (this.proc) return;
+    if (this.proc || this.cleaning) return; // cleaning: start() runs again when it's done
     const bin = this.bin;
     if (!bin) return this.set('missing', 'Engine not bundled with this build');
+    // An engine left over from a crash or an update (Windows doesn't end child processes with
+    // their parent) would hold the login port and the device name. Clear it out once per launch.
+    if (process.platform === 'win32' && !this.cleaned) {
+      this.cleaned = this.cleaning = true;
+      this.set('starting', 'Connecting…');
+      execFile('taskkill', ['/F', '/T', '/IM', path.basename(bin)], { windowsHide: true }, () => {
+        setTimeout(() => { this.cleaning = false; if (this.wanted && !this.proc) this.start(); }, 300);
+      });
+      return;
+    }
     fs.mkdirSync(this.cacheDir, { recursive: true });
     const args = [
       '--name', DEVICE_NAME,
