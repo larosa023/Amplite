@@ -3,7 +3,8 @@
 A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 
 - **Log in with your Spotify account**: no client secret is stored in the app.
-- **8 themes**: Midnight, Spotify, Classic Amp, Nord, Dracula, Sakura, Ocean, Paper.
+- **19 themes**: Midnight, Spotify, Classic Amp, Nord, Dracula, Sakura, Ocean, Paper, **AMOLED Black**, AMOLED Red, Catppuccin, Tokyo Night, Rosé Pine, Gruvbox, Solarized, Monokai, Forest, Sunset, Snow (light).
+- **Pins**: pin playlists, albums, artists or Liked Songs with the **Pin** button on their page or by right-clicking them. Pinned items sit at the top of the sidebar and first on Home. Drag to reorder, and open with `Ctrl+1` to `Ctrl+9`.
 - **Mini Amp**: click **AMP** (or press `M`) and Amplite shrinks into a small, always-on-top retro amp window. Close it to bring the full window back.
 - **Customizable amp** (Settings → Mini Amp): 8 skins plus fully custom colors, size, width, corners, font, glow, 6 visualizer styles, bar count, frame rate, album art, choose which parts to show, title scrolling, opacity and always-on-top.
 - **Collapsible sidebar** (button at the top of the sidebar, or `Ctrl+B`) and a **Lite mode** that turns off effects for lower CPU/GPU use.
@@ -11,7 +12,7 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Media keys** (play/pause, next, previous) work even when Amplite isn't focused.
 - Home (recently played and your top tracks), search, Liked Songs, playlists, albums and artists.
 - Plays music itself at **320 kbps** through a built-in audio engine, or acts as a remote for Spotify on your other devices.
-- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings.
+- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings · `Ctrl+1–9` pinned items.
 
 ## Install
 

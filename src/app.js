@@ -17,6 +17,9 @@ const SCOPES = [
 const THEMES = [
   ['midnight', 'Midnight'], ['spotify', 'Spotify'], ['classic', 'Classic Amp'], ['nord', 'Nord'],
   ['dracula', 'Dracula'], ['sakura', 'Sakura'], ['ocean', 'Ocean'], ['paper', 'Paper'],
+  ['amoled', 'AMOLED Black'], ['amoled-red', 'AMOLED Red'], ['catppuccin', 'Catppuccin'], ['tokyo', 'Tokyo Night'],
+  ['rosepine', 'Rosé Pine'], ['gruvbox', 'Gruvbox'], ['solarized', 'Solarized'], ['monokai', 'Monokai'],
+  ['forest', 'Forest'], ['sunset', 'Sunset'], ['snow', 'Snow (light)'],
 ];
 
 /* ---------------- helpers ---------------- */
@@ -88,6 +91,7 @@ const ICONS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 10l-2 2 2 2"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  pin: '<path d="M12 17v5M9 3h6l-1 6 4 4H6l4-4z"/>',
 };
 const svg = n => {
   const v = ICONS[n];
@@ -700,8 +704,9 @@ async function navigate(name, arg = '', push = true) {
 function goBack() { if (!S.back.length) return; S.fwd.push(S.cur); const v = S.back.pop(); navigate(v.name, v.arg, false); }
 function goFwd() { if (!S.fwd.length) return; S.back.push(S.cur); const v = S.fwd.pop(); navigate(v.name, v.arg, false); }
 
+const pinAttr = o => `data-pinfo="${esc(JSON.stringify({ type: o.type, id: o.id, uri: o.uri, name: o.name, image: o.image || '' }))}"`;
 function card({ kind, id, uri, title, sub, image, round }) {
-  return `<div class="card ${round ? 'round' : ''}" data-open="${kind}:${esc(id)}">
+  return `<div class="card ${round ? 'round' : ''}" data-open="${kind}:${esc(id)}" ${pinAttr({ type: kind, id, uri, name: title, image })}>
     <div class="art">${image ? `<img src="${esc(image)}" alt="" loading="lazy">` : `<div class="ph">${svg('music')}</div>`}
       <button class="card-play" data-play="${esc(uri)}" title="Play">${svg('play')}</button></div>
     <div class="card-title">${esc(title)}</div><div class="card-sub">${esc(sub || '')}</div></div>`;
@@ -720,12 +725,14 @@ function trackTable(tracks, { context = null, showAlbum = true, showArt = true }
   </div>`;
 }
 
-function hero({ image, art, round, kind, title, desc, meta }) {
+function hero({ image, art, round, kind, title, desc, meta, pin }) {
+  S.heroPin = pin || null;
   return `<header class="hero">
     ${art || (image ? `<img class="hero-art ${round ? 'round' : ''}" src="${esc(image)}" alt="">` : `<div class="hero-art ph">${svg('music')}</div>`)}
     <div class="hero-text"><div class="hero-kind">${esc(kind)}</div><h1>${esc(title)}</h1>
       ${desc ? `<p class="hero-desc">${esc(desc)}</p>` : ''}<div class="hero-meta">${meta || ''}</div></div>
-  </header><div class="actions pad"><button class="big-play" data-hero-play title="Play">${svg('play')}</button></div>`;
+  </header><div class="actions pad"><button class="big-play" data-hero-play title="Play">${svg('play')}</button>
+    ${pin ? `<button class="pin-btn ${isPinned(pin) ? 'on' : ''}" data-pin-toggle title="${isPinned(pin) ? 'Unpin' : 'Pin to sidebar'}">${svg('pin')}<span>${isPinned(pin) ? 'Pinned' : 'Pin'}</span></button>` : ''}</div>`;
 }
 
 function playRow(row) {
@@ -747,8 +754,12 @@ async function viewHome(el, _, alive) {
   const h = new Date().getHours();
   const greet = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
   const first = S.me?.display_name?.split(' ')[0];
-  const tiles = [`<div class="qtile" data-open="liked:"><div class="liked-mini">${svg('heart')}</div><span class="qname">Liked Songs</span></div>`]
-    .concat(S.playlists.slice(0, 7).map(p => `<div class="qtile" data-open="playlist:${esc(p.id)}">
+  const pinsHome = getPins().filter(p => p.type !== 'liked');
+  const pinnedIds = new Set(pinsHome.map(p => p.id));
+  const tileItems = [...pinsHome.map(p => ({ id: p.id, uri: p.uri, name: p.name, images: p.image ? [{ url: p.image }] : [], type: p.type })),
+    ...S.playlists.filter(p => p && !pinnedIds.has(p.id)).map(p => ({ ...p, type: 'playlist' }))].slice(0, 7);
+  const tiles = [`<div class="qtile" data-open="liked:" ${pinAttr({ type: 'liked', id: '', uri: '', name: 'Liked Songs' })}><div class="liked-mini">${svg('heart')}</div><span class="qname">Liked Songs</span></div>`]
+    .concat(tileItems.map(p => `<div class="qtile" data-open="${p.type}:${esc(p.id)}" ${pinAttr({ type: p.type, id: p.id, uri: p.uri, name: p.name, image: img(p.images, 64) })}>
       ${img(p.images, 64) ? `<img src="${esc(img(p.images, 64))}" alt="">` : `<div class="ph">${svg('music')}</div>`}
       <span class="qname">${esc(p.name)}</span><button class="card-play" data-play="${esc(p.uri)}" title="Play">${svg('play')}</button></div>`));
   el.innerHTML = `<div class="home"><div class="pad">
@@ -806,6 +817,7 @@ async function viewLiked(el, _, alive) {
   const tracks = items.map(i => norm(i.track)).filter(Boolean);
   el.innerHTML = hero({
     art: `<div class="hero-art liked-art">${svg('heart')}</div>`, kind: 'Playlist', title: 'Liked Songs',
+    pin: { type: 'liked', id: '', uri: '', name: 'Liked Songs', image: '' },
     meta: `${esc(S.me?.display_name || '')} · ${tracks.length} songs`,
   }) + `<div class="pad">${tracks.length ? trackTable(tracks) : '<p class="muted">Tap the heart on any song to save it here.</p>'}</div>`;
 }
@@ -827,6 +839,7 @@ async function viewPlaylist(el, id, alive) {
   const total = pl.items?.total ?? pl.tracks?.total ?? tracks.length;
   el.innerHTML = hero({
     image: img(pl.images), kind: pl.public === false ? 'Private playlist' : 'Playlist', title: pl.name,
+    pin: { type: 'playlist', id: pl.id, uri: pl.uri, name: pl.name, image: img(pl.images, 64) },
     desc: stripHtml(pl.description), meta: `${esc(pl.owner?.display_name || '')} · ${total} songs`,
   }) + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri }) : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`;
 }
@@ -840,6 +853,7 @@ async function viewAlbum(el, id, alive) {
   const tracks = items.map(t => norm({ ...t, album: { id: al.id, name: al.name, images: al.images } })).filter(Boolean);
   el.innerHTML = hero({
     image: img(al.images), kind: al.album_type === 'single' ? 'Single' : 'Album', title: al.name,
+    pin: { type: 'album', id: al.id, uri: al.uri, name: al.name, image: img(al.images, 64) },
     meta: `${artistLinks(al.artists)} · ${(al.release_date || '').slice(0, 4)} · ${tracks.length} songs`,
   }) + `<div class="pad">${trackTable(tracks, { context: al.uri, showAlbum: false, showArt: false })}</div>`;
 }
@@ -850,7 +864,8 @@ async function viewArtist(el, id, alive) {
   try { albums = (await api(`/artists/${id}/albums`, { query: { include_groups: 'album,single', limit: 10 } }))?.items || []; } catch {}
   if (!alive()) return;
   S.hero = { context: ar.uri };
-  el.innerHTML = hero({ image: img(ar.images), round: true, kind: 'Artist', title: ar.name, meta: (ar.genres || []).slice(0, 3).map(esc).join(' · ') })
+  el.innerHTML = hero({ image: img(ar.images), round: true, kind: 'Artist', title: ar.name, meta: (ar.genres || []).slice(0, 3).map(esc).join(' · '),
+    pin: { type: 'artist', id: ar.id, uri: ar.uri, name: ar.name, image: img(ar.images, 64) } })
     + `<div class="pad"><section><h2>Discography</h2>${albums.length
       ? `<div class="grid">${albums.map(a => card({ kind: 'album', id: a.id, uri: a.uri, title: a.name, sub: `${(a.release_date || '').slice(0, 4)} · ${a.album_type === 'single' ? 'Single' : 'Album'}`, image: img(a.images) })).join('')}</div>`
       : '<p class="muted">Spotify didn’t return releases for this artist — hit play to hear them.</p>'}</section></div>`;
@@ -858,10 +873,75 @@ async function viewArtist(el, id, alive) {
 
 async function loadPlaylists() {
   try { S.playlists = await pageAll('/me/playlists', { limit: 50 }, 300); } catch { S.playlists = []; }
-  $('#playlists').innerHTML = S.playlists.filter(Boolean).map(p => `<button class="pl-item" data-open="playlist:${esc(p.id)}" data-id="${esc(p.id)}" title="${esc(p.name)}">
+  $('#playlists').innerHTML = S.playlists.filter(Boolean).map(p => `<button class="pl-item" data-open="playlist:${esc(p.id)}" data-id="${esc(p.id)}" title="${esc(p.name)}" ${pinAttr({ type: 'playlist', id: p.id, uri: p.uri, name: p.name, image: img(p.images, 64) })}>
     ${img(p.images, 64) ? `<img src="${esc(img(p.images, 64))}" alt="" loading="lazy">` : `<div class="ph">${svg('music')}</div>`}
     <div class="pl-meta"><div class="pl-name">${esc(p.name)}</div><div class="pl-sub">Playlist · ${esc(p.owner?.display_name || '')}</div></div></button>`).join('')
     || '<p class="muted" style="padding:0 12px;font-size:13px">No playlists yet.</p>';
+}
+
+/* ---------------- pins (quick access) ---------------- */
+const PIN_LABEL = { playlist: 'Playlist', album: 'Album', artist: 'Artist', liked: 'Playlist' };
+const pinKey = o => o.type + ':' + (o.id || '');
+const getPins = () => store.get('pins', []) || [];
+const isPinned = o => getPins().some(p => pinKey(p) === pinKey(o));
+function savePins(pins) { store.set('pins', pins); renderPins(); }
+function togglePin(o) {
+  if (!o) return;
+  const pins = getPins(), k = pinKey(o);
+  if (pins.some(p => pinKey(p) === k)) { savePins(pins.filter(p => pinKey(p) !== k)); toast(`Unpinned ${o.name}`); }
+  else { savePins([...pins, o]); toast(`Pinned ${o.name} — it's at the top of the sidebar (Ctrl+${Math.min(pins.length + 1, 9)})`); }
+  const b = $('[data-pin-toggle]');
+  if (b && S.heroPin) { const on = isPinned(S.heroPin); b.classList.toggle('on', on); b.title = on ? 'Unpin' : 'Pin to sidebar'; b.querySelector('span').textContent = on ? 'Pinned' : 'Pin'; }
+}
+const openPin = p => p.type === 'liked' ? navigate('liked') : navigate(p.type, p.id);
+function renderPins() {
+  const pins = getPins(), box = $('#pins');
+  $('#pinSection').classList.toggle('hidden', !pins.length);
+  box.innerHTML = pins.map((p, i) => `<button class="pl-item pin-item" draggable="true" data-pin-idx="${i}" data-open="${p.type === 'liked' ? 'liked:' : p.type + ':' + esc(p.id)}" data-id="${esc(p.id)}" title="${esc(p.name)}${i < 9 ? ` (Ctrl+${i + 1})` : ''}" ${pinAttr(p)}>
+    ${p.type === 'liked' ? `<div class="liked-mini pin-art">${svg('heart')}</div>` : p.image ? `<img src="${esc(p.image)}" alt="" class="${p.type === 'artist' ? 'round' : ''}" loading="lazy">` : `<div class="ph">${svg('music')}</div>`}
+    <div class="pl-meta"><div class="pl-name">${esc(p.name)}</div><div class="pl-sub">${svg('pin')}${PIN_LABEL[p.type] || ''}</div></div></button>`).join('');
+}
+// Drag pinned items to reorder them.
+function bindPins() {
+  const box = $('#pins'); let from = null;
+  box.addEventListener('dragstart', e => { const it = e.target.closest('[data-pin-idx]'); if (!it) return; from = +it.dataset.pinIdx; it.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+  box.addEventListener('dragend', e => { e.target.closest?.('[data-pin-idx]')?.classList.remove('dragging'); $$('.drop-before', box).forEach(x => x.classList.remove('drop-before')); });
+  box.addEventListener('dragover', e => { const it = e.target.closest('[data-pin-idx]'); if (from == null || !it) return; e.preventDefault(); $$('.drop-before', box).forEach(x => x.classList.remove('drop-before')); it.classList.add('drop-before'); });
+  box.addEventListener('drop', e => {
+    const it = e.target.closest('[data-pin-idx]'); if (from == null || !it) return; e.preventDefault();
+    const pins = getPins(), to = +it.dataset.pinIdx, [m] = pins.splice(from, 1);
+    pins.splice(to > from ? to - 1 : to, 0, m); from = null; savePins(pins);
+  });
+}
+
+/* ---------------- right-click menu ---------------- */
+function showCtx(e, items) {
+  const m = $('#ctxMenu');
+  m.innerHTML = items.map((it, i) => it === '-' ? '<div class="ctx-sep"></div>' : `<button class="menu-item" data-ctx="${i}">${svg(it.icon)}<span>${esc(it.label)}</span></button>`).join('');
+  m._items = items;
+  m.classList.remove('hidden');
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(e.clientX, innerWidth - r.width - 8) + 'px';
+  m.style.top = Math.min(e.clientY, innerHeight - r.height - 8) + 'px';
+}
+function bindCtx() {
+  const m = $('#ctxMenu');
+  m.addEventListener('click', e => { const b = e.target.closest('[data-ctx]'); if (!b) return; m.classList.add('hidden'); m._items[+b.dataset.ctx].run(); });
+  document.addEventListener('contextmenu', e => {
+    const el = e.target.closest('[data-pinfo]');
+    if (!el) return;
+    e.preventDefault();
+    let o; try { o = JSON.parse(el.dataset.pinfo); } catch { return; }
+    const pinned = isPinned(o);
+    showCtx(e, [
+      { icon: 'play', label: 'Play', run: () => o.type === 'liked' ? navigate('liked').then(playHero) : playContext(o.uri) },
+      { icon: 'right', label: 'Open', run: () => openPin(o) },
+      '-',
+      { icon: 'pin', label: pinned ? 'Unpin from sidebar' : 'Pin to sidebar', run: () => togglePin(o) },
+    ]);
+  });
+  ['click', 'blur', 'resize'].forEach(ev => window.addEventListener(ev, () => m.classList.add('hidden')));
+  $('#view').addEventListener('scroll', () => m.classList.add('hidden'), { passive: true });
 }
 
 /* ---------------- themes ---------------- */
@@ -1112,6 +1192,7 @@ function onKey(e) {
   if (e.key === 'Escape' && !$('#settings').classList.contains('hidden')) { closeSettings(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleSidebar(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); openSettings(); return; }
+  if ((e.ctrlKey || e.metaKey) && /^[1-9]$/.test(e.key) && !S.ampWin) { const p = getPins()[+e.key - 1]; if (p) { e.preventDefault(); openPin(p); } return; }
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   else if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight') { e.preventDefault(); next(); }
   else if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
@@ -1163,6 +1244,7 @@ function bind() {
     const play = e.target.closest('[data-play]');
     if (play) { e.stopPropagation(); playContext(play.dataset.play); return; }
     if (e.target.closest('[data-hero-play]')) { playHero(); return; }
+    if (e.target.closest('[data-pin-toggle]')) { togglePin(S.heroPin); return; }
     const num = e.target.closest('.tnum');
     if (num) { playRow(num.closest('.trow')); return; }
     const open = e.target.closest('[data-open]');
@@ -1435,6 +1517,7 @@ async function boot() {
 
   updatePlayerUI();
   if (S.me.product && S.me.product !== 'premium') toast('Heads up: Spotify only allows playback in Amplite on Premium accounts. You can still browse.');
+  renderPins(); bindPins(); bindCtx();
   await loadPlaylists();
   navigate('home');
   if (IS_APP) initEngine(); else initSDK();

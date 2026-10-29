@@ -37,6 +37,10 @@
         <button class="nav-item" data-open="search:" data-view="search" data-i="search" title="Search"><span>Search</span></button>
         <button class="nav-item" data-open="liked:" data-view="liked" data-i="heart" title="Liked Songs"><span>Liked Songs</span></button>
       </nav>
+      <div id="pinSection" class="pin-section hidden">
+        <div class="side-label">Pinned</div>
+        <div id="pins" class="pins"></div>
+      </div>
       <div class="side-label">Your playlists</div>
       <div id="playlists" class="playlists"></div>
     </aside>
@@ -160,6 +164,7 @@
     </div>
   </div>
 
+  <div id="ctxMenu" class="popover ctx-menu hidden" role="menu"></div>
   <div id="toast" class="toast"></div>
   <script type="module" src="app.js"></script>
 </body>

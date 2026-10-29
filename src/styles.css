@@ -42,6 +42,65 @@
   --amp-frame:#d7d2c8; --amp-frame-hi:#ebe7df;
 }
 
+[data-theme="amoled"] {
+  --bg:#000; --panel:#000; --elev:#0b0b0b; --hover:#161616; --border:#1c1c1c;
+  --text:#fff; --muted:#8c8c8c; --accent:#fff; --on-accent:#000;
+  --amp-lcd:#000; --amp-lcd-text:#f2f2f2; --viz-lo:#6b6b6b; --viz-mid:#bdbdbd; --viz-hi:#fff;
+  --amp-frame:#0a0a0a; --amp-frame-hi:#1e1e1e;
+}
+[data-theme="amoled-red"] {
+  --bg:#000; --panel:#000; --elev:#0b0b0b; --hover:#161616; --border:#1c1c1c;
+  --text:#f5f5f5; --muted:#8c8c8c; --accent:#ff3b3b; --on-accent:#000;
+  --amp-lcd:#000; --amp-lcd-text:#ff4d4d; --viz-lo:#7a0f0f; --viz-mid:#ff3b3b; --viz-hi:#ffb3b3;
+  --amp-frame:#0a0a0a; --amp-frame-hi:#1e1e1e;
+}
+[data-theme="catppuccin"] {
+  --bg:#181825; --panel:#1e1e2e; --elev:#26263a; --hover:#313244; --border:#313244;
+  --text:#cdd6f4; --muted:#9399b2; --accent:#cba6f7; --on-accent:#1e1e2e;
+  --amp-lcd:#11111b; --amp-lcd-text:#a6e3a1; --viz-lo:#89b4fa; --viz-mid:#cba6f7; --viz-hi:#f5c2e7;
+}
+[data-theme="tokyo"] {
+  --bg:#16161e; --panel:#1a1b26; --elev:#222436; --hover:#2a2e42; --border:#292e42;
+  --text:#c0caf5; --muted:#7a83a8; --accent:#7aa2f7; --on-accent:#16161e;
+  --amp-lcd:#0f0f17; --amp-lcd-text:#7dcfff; --viz-lo:#7aa2f7; --viz-mid:#bb9af7; --viz-hi:#f7768e;
+}
+[data-theme="rosepine"] {
+  --bg:#191724; --panel:#1f1d2e; --elev:#26233a; --hover:#2f2b45; --border:#2a273f;
+  --text:#e0def4; --muted:#908caa; --accent:#ebbcba; --on-accent:#191724;
+  --amp-lcd:#12101c; --amp-lcd-text:#f6c177; --viz-lo:#31748f; --viz-mid:#c4a7e7; --viz-hi:#ebbcba;
+}
+[data-theme="gruvbox"] {
+  --bg:#1d2021; --panel:#282828; --elev:#32302f; --hover:#3c3836; --border:#3c3836;
+  --text:#ebdbb2; --muted:#a89984; --accent:#fabd2f; --on-accent:#1d2021;
+  --amp-lcd:#141617; --amp-lcd-text:#b8bb26; --viz-lo:#98971a; --viz-mid:#fabd2f; --viz-hi:#fb4934;
+}
+[data-theme="solarized"] {
+  --bg:#00212b; --panel:#002b36; --elev:#073642; --hover:#0b4251; --border:#0b4251;
+  --text:#eee8d5; --muted:#93a1a1; --accent:#2aa198; --on-accent:#002b36;
+  --amp-lcd:#001820; --amp-lcd-text:#b58900; --viz-lo:#268bd2; --viz-mid:#2aa198; --viz-hi:#cb4b16;
+}
+[data-theme="monokai"] {
+  --bg:#1e1f1c; --panel:#272822; --elev:#2f302a; --hover:#3e3d32; --border:#3e3d32;
+  --text:#f8f8f2; --muted:#a59f85; --accent:#a6e22e; --on-accent:#1e1f1c;
+  --amp-lcd:#141511; --amp-lcd-text:#e6db74; --viz-lo:#66d9ef; --viz-mid:#a6e22e; --viz-hi:#f92672;
+}
+[data-theme="forest"] {
+  --bg:#0f1712; --panel:#141f18; --elev:#1b2a20; --hover:#24362a; --border:#24362a;
+  --text:#e2efe5; --muted:#8fa996; --accent:#7bd389; --on-accent:#0f1712;
+  --amp-lcd:#08100b; --amp-lcd-text:#9ef0a8; --viz-lo:#3d8b4f; --viz-mid:#7bd389; --viz-hi:#e0f5a3;
+}
+[data-theme="sunset"] {
+  --bg:#1a1016; --panel:#22141c; --elev:#2c1a24; --hover:#38212e; --border:#38212e;
+  --text:#fde8e1; --muted:#c09aa3; --accent:#ff8a5c; --on-accent:#1a1016;
+  --amp-lcd:#12090e; --amp-lcd-text:#ffb86b; --viz-lo:#c2366e; --viz-mid:#ff8a5c; --viz-hi:#ffd36b;
+}
+[data-theme="snow"] {
+  --bg:#f3f4f7; --panel:#ffffff; --elev:#f5f6f9; --hover:#eceef3; --border:#e3e6ec;
+  --text:#14161c; --muted:#646b7a; --accent:#2f6bff; --on-accent:#fff;
+  --amp-lcd:#14161c; --amp-lcd-text:#8fb3ff; --viz-lo:#2f6bff; --viz-mid:#7a5cff; --viz-hi:#ff5c8a;
+  --amp-frame:#dde1e8; --amp-frame-hi:#f5f6f9;
+}
+
 /* ============ Base ============ */
 :root { --font-ui:"Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif; --font-mono:"Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace; }
 * { box-sizing:border-box; margin:0; padding:0; }
@@ -250,9 +309,10 @@ img { display:block; }
 .menu-item { display:flex; gap:10px; align-items:center; width:100%; padding:10px 12px; border-radius:8px; font-weight:500; }
 .menu-item:hover { background:var(--hover); }
 .menu-item .ic { width:17px; height:17px; }
-.theme-panel { top:58px; right:70px; width:300px; padding:14px; }
+.theme-panel { top:58px; right:70px; width:360px; padding:14px; max-height:min(560px, calc(100vh - 140px)); overflow-y:auto; }
 .pop-title { font-weight:700; margin:0 2px 10px; }
-.theme-list { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.theme-list { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; }
+#setThemes { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); }
 .theme-opt { background:var(--bg); color:var(--text); border:2px solid var(--border); border-radius:10px; padding:10px; text-align:left; font-weight:600; font-size:13px; transition:transform .15s; }
 .theme-opt:hover { transform:translateY(-2px); }
 .theme-opt.active { border-color:var(--accent); }
@@ -282,6 +342,15 @@ img { display:block; }
 }
 [data-theme="classic"] .amp { --amp-frame-x:#2c2c38; --amp-frame-hi-x:#55556a; }
 [data-theme="paper"] .amp { --amp-frame-x:#d7d2c8; --amp-frame-hi-x:#efebe3; }
+[data-theme="amoled"] .amp, [data-theme="amoled-red"] .amp { --amp-frame-x:#050505; --amp-frame-hi-x:#1a1a1a; }
+[data-theme="snow"] .amp { --amp-frame-x:#d9dde5; --amp-frame-hi-x:#f7f8fb; }
+/* AMOLED: pure black everywhere (no tinted page glows), true-black pixels stay off on OLED screens */
+[data-theme="amoled"] .home, [data-theme="amoled"] .hero, [data-theme="amoled"] .login, [data-theme="amoled"] .amp-host,
+[data-theme="amoled-red"] .home, [data-theme="amoled-red"] .hero, [data-theme="amoled-red"] .login, [data-theme="amoled-red"] .amp-host { background:#000; }
+[data-theme="amoled"] .app, [data-theme="amoled-red"] .app { gap:0; padding:0; }
+[data-theme="amoled"] .sidebar, [data-theme="amoled"] .main, [data-theme="amoled-red"] .sidebar, [data-theme="amoled-red"] .main { border-radius:0; }
+[data-theme="amoled"] .sidebar, [data-theme="amoled-red"] .sidebar { border-right:1px solid var(--border); }
+[data-theme="amoled"] .player, [data-theme="amoled-red"] .player { border-top:1px solid var(--border); }
 .amp.f-sans { --a-font:var(--font-ui); }
 .amp.no-glow { --a-glow:0px; }
 .amp-title { display:flex; align-items:center; gap:6px; height:18px; padding:0 3px 0 8px; font-size:8px; letter-spacing:.35em; color:var(--a-label); }
@@ -336,6 +405,26 @@ kbd { font:11px var(--font-mono); border:1px solid var(--border); border-bottom-
 .pip-body { margin:0; background:var(--amp-lcd); overflow:hidden; }
 .pip-body .amp { border:0; border-radius:0; box-shadow:none; }
 
+/* ============ Pins + context menu ============ */
+.pin-section { margin-bottom:4px; }
+.pins { display:flex; flex-direction:column; gap:2px; }
+.pin-item .pl-sub { display:flex; align-items:center; gap:4px; }
+.pin-item .pl-sub .ic { width:11px; height:11px; color:var(--accent); }
+.pin-item img.round { border-radius:50%; }
+.pin-art { width:42px; height:42px; border-radius:6px; flex:none; }
+.pin-art .ic { width:18px; height:18px; fill:currentColor; }
+.pin-item.dragging { opacity:.4; }
+.pin-item.drop-before { box-shadow:inset 0 2px 0 var(--accent); }
+.app.side-min .pin-section { border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px; }
+.app.side-min .pin-section .side-label { display:none; }
+.actions { display:flex; align-items:center; gap:16px; }
+.pin-btn { display:flex; align-items:center; gap:7px; padding:8px 14px; border-radius:999px; border:1px solid var(--border); color:var(--muted); font-weight:600; font-size:13px; transition:all .15s; }
+.pin-btn:hover { color:var(--text); border-color:var(--muted); }
+.pin-btn.on { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 50%, transparent); background:color-mix(in srgb, var(--accent) 10%, transparent); }
+.pin-btn .ic { width:16px; height:16px; }
+.ctx-menu { min-width:200px; padding:6px; z-index:300; }
+.ctx-sep { height:1px; background:var(--border); margin:4px 6px; }
+
 /* ============ Desktop app ============ */
 .titlebar { display:none; }
 .is-app .titlebar { display:flex; align-items:center; gap:8px; position:fixed; top:0; left:0; right:0; height:36px; padding:0 14px; font-size:12px; font-weight:600; color:var(--muted); -webkit-app-region:drag; user-select:none; z-index:200; background:var(--bg); }
@@ -367,6 +456,8 @@ kbd { font:11px var(--font-mono); border:1px solid var(--border); border-bottom-
 .app.side-min .side-toggle .ic { transform:scaleX(-1); }
 .app.side-min .nav-item, .app.side-min .pl-item { justify-content:center; }
 .app.side-min .side-label + .playlists { margin-top:12px; }
+.app.side-min .playlists { scrollbar-width:none; }
+.app.side-min .playlists::-webkit-scrollbar { width:0; }
 
 /* ============ Settings ============ */
 .modal { position:fixed; inset:0; z-index:150; display:grid; place-items:center; padding:24px; background:color-mix(in srgb, #000 55%, transparent); }
