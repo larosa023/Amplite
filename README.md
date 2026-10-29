@@ -32,7 +32,23 @@ Amplite plays through a bundled copy of [librespot](https://github.com/librespot
 - Quality (320 / 160 / 96 kbps), volume normalization and the engine status are in **Settings → Audio**, along with **Restart** and **Re-link** buttons if something goes wrong.
 - Amplite can still control your other Spotify devices (phone, desktop app). Click **Play here** to move playback into Amplite.
 
-**Accounts the engine can't play:** Spotify refuses decryption keys to librespot for some Premium accounts (a known upstream issue, [librespot #1735](https://github.com/librespot-org/librespot/issues/1735)). Amplite detects this and switches automatically to playing through the **official Spotify desktop app**, which it starts minimized in the background, while you keep using Amplite as normal. Install the Spotify desktop app if you don't have it. You can also choose the source yourself in **Settings → Audio → Play audio with**.
+### Accounts the engine can't play
+
+Spotify refuses decryption keys to librespot for many newer Premium accounts (a known upstream issue, [librespot #1649](https://github.com/librespot-org/librespot/issues/1649)). In **Automatic** mode Amplite detects this and moves on to the next source:
+
+1. **Amplite engine:** librespot, 320 kbps Ogg Vorbis.
+2. **Amplite web player:** Spotify's official Web Playback SDK running inside Amplite with Widevine DRM (about 256 kbps AAC). It works for any Premium account, **but only in a VMP-signed build** (see below).
+3. **Spotify app:** the official desktop app, started hidden in the background and closed again when Amplite quits.
+
+You can also pick the source yourself in **Settings → Audio → Play audio with**.
+
+### Enabling the in-app web player (VMP signing, one-time, free)
+
+Spotify's DRM only works in apps signed through castLabs' free EVS service:
+
+1. Install Python, then run `pip install castlabs-evs` and `python -m castlabs_evs.account signup`. Pick an account name and password, and confirm the email code.
+2. In this repo, open **Settings → Secrets and variables → Actions → New repository secret** and add `EVS_ACCOUNT_NAME` and `EVS_PASSWD` with those values.
+3. Push a new version (or re-run **Build Windows app**). The build log shows **"VMP signed"**, and from that version on the web player is used automatically wherever the engine is refused.
 
 librespot is unofficial and Spotify Premium is required. If the engine is missing from a build, Amplite falls back to Spotify's Web Playback SDK.
 

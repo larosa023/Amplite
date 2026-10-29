@@ -169,18 +169,37 @@ function findSpotifyExe() {
     : process.platform === 'darwin' ? ['/Applications/Spotify.app/Contents/MacOS/Spotify'] : ['/usr/bin/spotify', '/snap/bin/spotify'];
   return c.find(p => { try { fs.accessSync(p); return true; } catch { return false; } });
 }
-ipcMain.handle('spotify-app', async (_e, action) => {
+let launchedSpotify = false;
+// Hides Spotify's window completely (no taskbar button) using Win32 ShowWindow(SW_HIDE).
+// Spotify keeps running and playing; Amplite stays the only thing you see.
+function hideSpotifyWindow() {
+  if (process.platform !== 'win32') return;
+  const ps = `Add-Type -Namespace A -Name W -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(System.IntPtr h, int n);';
+Get-Process Spotify -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [A.W]::ShowWindowAsync($_.MainWindowHandle, 0) | Out-Null }`;
+  try {
+    const { spawn } = require('child_process');
+    spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps], { windowsHide: true, stdio: 'ignore' });
+  } catch {}
+}
+ipcMain.handle('spotify-app', async (_e, action, opts = {}) => {
   const exe = findSpotifyExe();
   if (action === 'check') return { installed: !!exe, host: require('os').hostname() };
+  if (action === 'hide') { hideSpotifyWindow(); return { ok: true }; }
   try {
     if (exe) {
       const { spawn } = require('child_process');
       spawn(exe, ['--minimized'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      return { ok: true, how: 'exe' };
-    }
-    await shell.openExternal('spotify:');
-    return { ok: true, how: 'protocol' };
+    } else await shell.openExternal('spotify:');
+    launchedSpotify = true;
+    // Spotify creates its window a few seconds after launch; hide it as soon as it appears.
+    if (opts.hide !== false) [1500, 3000, 5000, 8000, 12000, 18000].forEach(ms => setTimeout(hideSpotifyWindow, ms));
+    return { ok: true, how: exe ? 'exe' : 'protocol' };
   } catch (e) { return { ok: false, error: e.message }; }
+});
+// If Amplite started Spotify for you, close it again when Amplite quits.
+app.on('before-quit', () => {
+  if (!launchedSpotify || process.platform !== 'win32') return;
+  try { require('child_process').spawn('taskkill', ['/F', '/IM', 'Spotify.exe', '/T'], { windowsHide: true, stdio: 'ignore', detached: true }).unref(); } catch {}
 });
 
 /* ---------------- auto-update (GitHub Releases) ---------------- */

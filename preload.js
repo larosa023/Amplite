@@ -17,6 +17,6 @@ contextBridge.exposeInMainWorld('amplite', {
   ampWindow: opts => ipcRenderer.send('amp-window', opts),
   engineRestart: opts => ipcRenderer.send('engine-restart', opts),
   engineStop: () => ipcRenderer.send('engine-stop'),
-  spotifyApp: action => ipcRenderer.invoke('spotify-app', action),
+  spotifyApp: (action, opts) => ipcRenderer.invoke('spotify-app', action, opts),
   onEngine: cb => ipcRenderer.on('engine', (_e, s) => cb(s)),
 });
