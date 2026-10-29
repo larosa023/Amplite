@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Amplite</title>
+  <meta name="description" content="A lightweight Spotify player with themes and a mini amp.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Login -->
+  <div id="login" class="login hidden">
+    <div class="login-card">
+      <span class="logo xl" data-logo></span>
+      <h1>Amplite</h1>
+      <p class="tag">A lightweight Spotify player with themes and a pocket-sized amp.</p>
+      <button id="loginBtn" class="login-btn">Log in with Spotify</button>
+      <p id="loginErr" class="login-err hidden"></p>
+      <details class="login-help">
+        <summary>First-time setup</summary>
+        <p>In your Spotify developer dashboard, add this exact Redirect URI:</p>
+        <code id="redirectUri"></code>
+        <p>In-browser playback needs Spotify Premium and Chrome, Edge or Firefox.</p>
+      </details>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="logo" data-logo></span><span>Amplite</span></div>
+      <nav class="nav">
+        <button class="nav-item" data-open="home:" data-view="home" data-i="home"><span>Home</span></button>
+        <button class="nav-item" data-open="search:" data-view="search" data-i="search"><span>Search</span></button>
+        <button class="nav-item" data-open="liked:" data-view="liked" data-i="heart"><span>Liked Songs</span></button>
+      </nav>
+      <div class="side-label">Your playlists</div>
+      <div id="playlists" class="playlists"></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="arrows">
+          <button id="backBtn" class="round-btn" data-i="left" title="Back"></button>
+          <button id="fwdBtn" class="round-btn" data-i="right" title="Forward"></button>
+        </div>
+        <div id="searchWrap" class="search-wrap hidden" data-i="search">
+          <input id="searchInput" type="search" placeholder="What do you want to play?" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="spacer"></div>
+        <button id="themeBtn" class="round-btn" data-i="palette" title="Themes"></button>
+        <div class="user">
+          <button id="userBtn" class="user-chip"></button>
+          <div id="userMenu" class="popover user-menu hidden">
+            <button id="logoutBtn" class="menu-item" data-i="logout"><span>Log out</span></button>
+          </div>
+        </div>
+      </header>
+      <section id="view" class="view"></section>
+    </main>
+
+    <footer class="player">
+      <div class="np">
+        <img id="npArt" class="np-art" alt="">
+        <div class="np-text">
+          <div id="npTitle" class="np-title">Nothing playing</div>
+          <div id="npArtist" class="np-artist"></div>
+        </div>
+        <button id="likeBtn" class="icon-btn like" data-i="heart" title="Save to Liked Songs"></button>
+      </div>
+      <div class="ctrl">
+        <div class="ctrl-btns">
+          <button id="shufBtn" class="icon-btn toggle" data-i="shuffle" title="Shuffle"></button>
+          <button id="prevBtn" class="icon-btn" data-i="prev" title="Previous"></button>
+          <button id="playBtn" class="play-btn" title="Play / Pause (Space)"></button>
+          <button id="nextBtn" class="icon-btn" data-i="next" title="Next"></button>
+          <button id="repBtn" class="icon-btn toggle" data-i="repeat" title="Repeat"><span class="rep1">1</span></button>
+        </div>
+        <div class="seek">
+          <span id="tCur">0:00</span>
+          <input id="seek" class="range" type="range" min="0" max="1000" value="0" aria-label="Seek">
+          <span id="tDur">0:00</span>
+        </div>
+      </div>
+      <div class="extra">
+        <button id="deviceBtn" class="device-chip hidden"></button>
+        <button id="muteBtn" class="icon-btn" title="Mute"></button>
+        <input id="vol" class="range vol" type="range" min="0" max="100" aria-label="Volume">
+        <button id="ampBtn" class="amp-btn" data-i="amp" title="Mini Amp (M)"><span>AMP</span></button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Theme picker -->
+  <div id="themePanel" class="popover theme-panel hidden">
+    <div class="pop-title">Theme</div>
+    <div id="themeList" class="theme-list"></div>
+  </div>
+
+  <!-- Mini Amp (moves into a pop-out window when available) -->
+  <div id="ampHost" class="amp-host hidden">
+    <div id="amp" class="amp">
+      <div class="amp-title">
+        <span class="amp-grip"></span><b>AMPLITE</b><span class="amp-grip"></span>
+        <button class="amp-x" data-amp="popout" data-i="popout" title="Pop out / pop in"></button>
+        <button class="amp-x" data-amp="close" data-i="x" title="Back to full player"></button>
+      </div>
+      <div class="amp-body">
+        <div class="amp-lcd">
+          <div class="amp-left">
+            <div class="amp-row"><span id="ampState" class="amp-state">■</span><span id="ampTime" class="amp-time" title="Click: elapsed / remaining">00:00</span></div>
+            <canvas id="ampViz" class="amp-viz" width="94" height="28"></canvas>
+          </div>
+          <div class="amp-right">
+            <div class="amp-marquee"><span id="ampMarq"></span></div>
+            <div class="amp-meta"><span>256</span> kbps <span>44</span> kHz <em id="ampDev">stereo</em></div>
+            <input id="ampVol" class="amp-range amp-vol" type="range" min="0" max="100" aria-label="Volume">
+          </div>
+        </div>
+        <input id="ampSeek" class="amp-range amp-seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
+        <div class="amp-controls">
+          <button data-amp="prev" data-i="prev" title="Previous"></button>
+          <button data-amp="play" data-i="play" title="Play"></button>
+          <button data-amp="pause" data-i="pause" title="Pause"></button>
+          <button data-amp="stop" data-i="stop" title="Stop"></button>
+          <button data-amp="next" data-i="next" title="Next"></button>
+          <span class="amp-sep"></span>
+          <button data-amp="shuffle" class="amp-tog" title="Shuffle">SHUF</button>
+          <button data-amp="repeat" class="amp-tog" title="Repeat">REP</button>
+        </div>
+      </div>
+    </div>
+    <p class="amp-hint">Press <kbd>M</kbd> or ✕ to return to the full player</p>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
