@@ -32,6 +32,7 @@ jobs:
           path: |
             dist/*.exe
             dist/*.zip
+            dist/latest.yml
       - name: Read version
         id: ver
         shell: bash
@@ -48,4 +49,6 @@ jobs:
             First time? Add `http://127.0.0.1:43821/` as a Redirect URI in your Spotify developer dashboard.
           files: |
             dist/*.exe
+            dist/*.exe.blockmap
             dist/*.zip
+            dist/latest.yml

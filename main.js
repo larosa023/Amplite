@@ -134,6 +134,31 @@ ipcMain.on('main-visibility', (_e, show) => {
 });
 ipcMain.on('quit', () => app.quit());
 
+/* ---------------- auto-update (GitHub Releases) ---------------- */
+let autoUpdater = null;
+const sendUpdate = (state, extra = {}) => mainWin?.webContents.send('update', { state, ...extra });
+function initUpdater() {
+  if (!app.isPackaged) return; // only in the installed app
+  try { ({ autoUpdater } = require('electron-updater')); } catch (e) { console.warn('Updater unavailable', e); return; }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('checking-for-update', () => sendUpdate('checking'));
+  autoUpdater.on('update-available', i => sendUpdate('downloading', { version: i.version }));
+  autoUpdater.on('update-not-available', () => sendUpdate('latest'));
+  autoUpdater.on('download-progress', p => sendUpdate('downloading', { percent: Math.round(p.percent) }));
+  autoUpdater.on('update-downloaded', i => sendUpdate('ready', { version: i.version }));
+  autoUpdater.on('error', e => sendUpdate('error', { message: String(e?.message || e).split('\n')[0] }));
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  setTimeout(check, 5000);
+  setInterval(check, 4 * 60 * 60 * 1000);
+}
+ipcMain.handle('app-info', () => ({ version: app.getVersion(), packaged: app.isPackaged }));
+ipcMain.on('update-check', () => {
+  if (!autoUpdater) return sendUpdate('error', { message: app.isPackaged ? 'Updater unavailable' : 'Updates only work in the installed app' });
+  autoUpdater.checkForUpdates().catch(e => sendUpdate('error', { message: String(e?.message || e).split('\n')[0] }));
+});
+ipcMain.on('update-install', () => { if (autoUpdater) setImmediate(() => autoUpdater.quitAndInstall(false, true)); });
+
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   try {
@@ -148,6 +173,7 @@ app.whenReady().then(async () => {
     return app.quit();
   }
   createMain();
+  initUpdater();
 
   const send = cmd => mainWin?.webContents.send('media', cmd);
   globalShortcut.register('MediaPlayPause', () => send('toggle'));

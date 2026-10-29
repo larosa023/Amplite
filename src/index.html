@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="titlebar"><span class="logo sm" data-logo></span><span>Amplite</span></div>
+  <div class="titlebar"><span class="logo sm" data-logo></span><span>Amplite</span><button id="updBtn" class="upd-pill" title="Check for updates"></button></div>
 
   <!-- Login -->
   <div id="login" class="login hidden">
@@ -58,7 +58,9 @@
         <div class="user">
           <button id="userBtn" class="user-chip"></button>
           <div id="userMenu" class="popover user-menu hidden">
+            <button id="updMenuBtn" class="menu-item app-only" data-i="refresh"><span>Check for updates</span></button>
             <button id="logoutBtn" class="menu-item" data-i="logout"><span>Log out</span></button>
+            <div id="verLine" class="ver-line app-only"></div>
           </div>
         </div>
       </header>

@@ -1,7 +1,7 @@
 // Amplite — a lightweight Spotify player
 // Pure ES modules, no build step. Auth uses PKCE, so only the public Client ID lives here.
 
-const CLIENT_ID = '4a805ba1e7ce4e008949154d92827b38';
+const CLIENT_ID = '8d242b5e87d1482ea0ce0978b9d2cf83';
 const IS_APP = !!window.amplite; // running inside the Amplite desktop app
 const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/, '');
 const SCOPES = [
@@ -56,6 +56,7 @@ const ICONS = {
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
 };
 const svg = n => {
   const v = ICONS[n];
@@ -828,6 +829,43 @@ function bind() {
   A.vol.oninput = () => setVolume(A.vol.value / 100);
 }
 
+/* ---------------- updates (desktop app) ---------------- */
+const U = { state: 'idle', version: '', manual: false };
+function renderUpdate() {
+  const b = $('#updBtn'); if (!b) return;
+  b.className = 'upd-pill';
+  const v = 'v' + U.version;
+  switch (U.state) {
+    case 'checking': b.textContent = 'Checking for updates…'; b.classList.add('busy'); break;
+    case 'downloading': b.textContent = `Downloading update${U.percent != null ? ` ${U.percent}%` : '…'}`; b.classList.add('busy'); break;
+    case 'ready': b.textContent = `Update ${U.next} ready — restart`; b.classList.add('ready'); b.title = 'Restart to install'; break;
+    case 'error': b.textContent = `${v} · update failed`; b.classList.add('err'); b.title = U.message || ''; break;
+    default: b.textContent = v; b.title = 'Check for updates';
+  }
+}
+function initUpdates() {
+  window.amplite.info().then(i => { U.version = i.version; $('#verLine').textContent = `Amplite v${i.version}`; renderUpdate(); });
+  window.amplite.onUpdate(s => {
+    if (s.state === 'downloading' && s.version) U.next = 'v' + s.version;
+    if (s.state === 'ready') U.next = 'v' + s.version;
+    U.percent = s.percent ?? (s.state === 'downloading' ? U.percent : null);
+    U.message = s.message;
+    U.state = s.state === 'latest' ? 'idle' : s.state;
+    if (U.manual && s.state === 'latest') toast(`You're on the latest version (v${U.version}).`);
+    if (U.manual && s.state === 'error') toast('Update check failed: ' + (s.message || 'unknown error'));
+    if (s.state === 'ready') toast(`Amplite ${U.next} is ready — click the update button in the title bar to restart.`);
+    if (s.state !== 'checking') U.manual = false;
+    renderUpdate();
+  });
+  const check = () => {
+    if (U.state === 'ready') return window.amplite.installUpdate();
+    if (U.state === 'checking' || U.state === 'downloading') return;
+    U.manual = true; window.amplite.checkUpdate();
+  };
+  $('#updBtn').onclick = check;
+  $('#updMenuBtn').onclick = check;
+}
+
 /* ---------------- boot ---------------- */
 function showLogin(err) {
   $('#app').classList.add('hidden');
@@ -843,6 +881,7 @@ async function boot() {
     $('[data-amp="popout"]').remove();
     $('[data-amp="close"]').title = 'Back to full player';
     $('.amp-hint').textContent = '';
+    initUpdates();
   }
   $$('[data-i]').forEach(el => el.insertAdjacentHTML('afterbegin', svg(el.dataset.i)));
   $$('[data-logo]').forEach(el => { el.innerHTML = LOGO; });

@@ -5,6 +5,7 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Log in with your Spotify account**: no client secret is stored in the app.
 - **8 themes**: Midnight, Spotify, Classic Amp, Nord, Dracula, Sakura, Ocean, Paper.
 - **Mini Amp**: click **AMP** (or press `M`) and Amplite shrinks into a small, always-on-top retro amp window. Close it to bring the full window back.
+- **Auto-updates**: Amplite checks GitHub Releases, downloads new versions in the background, and shows a restart button in the title bar. You can also use **Check for updates** in the account menu.
 - **Media keys** (play/pause, next, previous) work even when Amplite isn't focused.
 - Home (recently played and your top tracks), search, Liked Songs, playlists, albums and artists.
 - Plays music itself, or acts as a remote for the Spotify app on your PC or phone.
