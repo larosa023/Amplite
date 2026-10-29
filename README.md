@@ -19,7 +19,7 @@ Download **Amplite-Setup-x.y.z.exe** from [Releases](../../releases) and run it.
 
 In your app on the [Spotify developer dashboard](https://developer.spotify.com/dashboard):
 
-1. **Settings → Redirect URIs**: add `http://127.0.0.1:43821/` (exactly, including the trailing slash). Tick **Web API** and **Web Playback SDK**, then save.
+1. **Settings → Redirect URIs**: add `http://127.0.0.1:43821/callback` (exactly). Tick **Web API** and **Web Playback SDK**, then save.
 2. **User Management**: add the email of the Spotify account you'll log in with.
 
 ## Playing music inside Amplite

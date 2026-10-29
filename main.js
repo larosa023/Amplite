@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Spotify only accepts loopback redirect URIs for desktop apps, so the UI is served
-// from a tiny local server. Add http://127.0.0.1:43821/ in your Spotify dashboard.
+// from a tiny local server. Add http://127.0.0.1:43821/callback in your Spotify dashboard.
 const PORT = 43821;
 const ROOT = path.join(__dirname, 'src');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -108,12 +108,14 @@ function createMain() {
     const redirect = /redirect_uri/i.test(text), client = /invalid_client|INVALID_CLIENT/i.test(text);
     if (!redirect && !client) return;
     const { dialog, clipboard } = require('electron');
-    const uri = `http://127.0.0.1:${PORT}/`;
+    let sent = {};
+    try { const q = new URL(url).searchParams; sent = { client: q.get('client_id'), redirect: q.get('redirect_uri') }; } catch {}
+    const uri = sent.redirect || `http://127.0.0.1:${PORT}/callback`;
     const r = await dialog.showMessageBox(mainWin, {
       type: 'warning', title: 'Spotify login setup',
       message: redirect ? 'Spotify doesn’t recognise Amplite’s redirect URI yet.' : 'Spotify rejected the Client ID.',
       detail: redirect
-        ? `In developer.spotify.com/dashboard → your app → Settings → Edit, add this Redirect URI exactly, then click Save at the bottom:\n\n${uri}\n\nThen try logging in again.`
+        ? `In developer.spotify.com/dashboard, open the app whose Client ID is\n${sent.client || '(unknown)'}\n→ Settings → Edit, add this Redirect URI exactly, then click Save at the bottom:\n\n${uri}\n\nChanges can take a minute to apply. Then try logging in again. (Amplite v${app.getVersion()})`
         : `Check the Client ID in your Spotify developer dashboard.\n\nSpotify said: ${text.trim()}`,
       buttons: redirect ? ['Copy URI and go back', 'Go back'] : ['Go back'],
       defaultId: 0,

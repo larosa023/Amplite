@@ -46,7 +46,7 @@ jobs:
           make_latest: true
           body: |
             **Download `Amplite-Setup-${{ steps.ver.outputs.v }}.exe` below and run it.**
-            First time? Add `http://127.0.0.1:43821/` as a Redirect URI in your Spotify developer dashboard.
+            First time? Add `http://127.0.0.1:43821/callback` as a Redirect URI in your Spotify developer dashboard.
           files: |
             dist/*.exe
             dist/*.exe.blockmap

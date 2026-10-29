@@ -3,7 +3,9 @@
 
 const CLIENT_ID = '8d242b5e87d1482ea0ce0978b9d2cf83';
 const IS_APP = !!window.amplite; // running inside the Amplite desktop app
-const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/, '');
+const HOME_URI = location.origin + location.pathname.replace(/(index\.html|callback)$/, '');
+// Desktop app: Spotify's recommended loopback form, e.g. http://127.0.0.1:43821/callback
+const REDIRECT_URI = window.amplite ? location.origin + '/callback' : HOME_URI;
 const SCOPES = [
   'streaming', 'user-read-email', 'user-read-private',
   'user-read-playback-state', 'user-modify-playback-state', 'user-read-currently-playing',
@@ -106,7 +108,7 @@ async function tokenRequest(params) {
 async function handleCallback() {
   const q = new URLSearchParams(location.search);
   if (!q.has('code') && !q.has('error')) return;
-  history.replaceState(null, '', REDIRECT_URI);
+  history.replaceState(null, '', HOME_URI);
   if (q.get('error')) throw new Error(q.get('error') === 'access_denied' ? 'Login was cancelled.' : q.get('error'));
   const verifier = store.get('verifier');
   if (!verifier) throw new Error('Login session expired — try again.');
@@ -126,7 +128,7 @@ async function getToken() {
 function logout() {
   store.del('token');
   try { S.player?.disconnect(); } catch {}
-  location.href = REDIRECT_URI;
+  location.href = HOME_URI;
 }
 
 /* ---------------- Web API ---------------- */
