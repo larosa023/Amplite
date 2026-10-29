@@ -97,6 +97,31 @@ function createMain() {
     shell.openExternal(url);
   });
 
+  // If Spotify shows a bare error page during login (e.g. redirect URI not added yet),
+  // explain the fix and go back to Amplite instead of leaving the user stuck.
+  mainWin.webContents.on('did-finish-load', async () => {
+    const wc = mainWin?.webContents; if (!wc) return;
+    const url = wc.getURL();
+    if (!url.startsWith('https://accounts.spotify.com')) return;
+    let text = '';
+    try { text = await wc.executeJavaScript('(document.body && document.body.innerText || "").slice(0, 400)'); } catch {}
+    const redirect = /redirect_uri/i.test(text), client = /invalid_client|INVALID_CLIENT/i.test(text);
+    if (!redirect && !client) return;
+    const { dialog, clipboard } = require('electron');
+    const uri = `http://127.0.0.1:${PORT}/`;
+    const r = await dialog.showMessageBox(mainWin, {
+      type: 'warning', title: 'Spotify login setup',
+      message: redirect ? 'Spotify doesn’t recognise Amplite’s redirect URI yet.' : 'Spotify rejected the Client ID.',
+      detail: redirect
+        ? `In developer.spotify.com/dashboard → your app → Settings → Edit, add this Redirect URI exactly, then click Save at the bottom:\n\n${uri}\n\nThen try logging in again.`
+        : `Check the Client ID in your Spotify developer dashboard.\n\nSpotify said: ${text.trim()}`,
+      buttons: redirect ? ['Copy URI and go back', 'Go back'] : ['Go back'],
+      defaultId: 0,
+    });
+    if (redirect && r.response === 0) clipboard.writeText(uri);
+    mainWin?.loadURL(`http://127.0.0.1:${PORT}/`);
+  });
+
   mainWin.loadURL(`http://127.0.0.1:${PORT}/`);
 }
 
