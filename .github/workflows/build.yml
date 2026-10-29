@@ -28,13 +28,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: bin/librespot.exe
-          key: librespot-0.8.0-win-x64-nativetls-rodio-v1
-      - name: Build audio engine (librespot 0.8.0)
+          key: librespot-0.8.0-win-x64-nativetls-rodio-${{ hashFiles('patches/**') }}
+      - name: Build audio engine (librespot 0.8.0 + Amplite patches)
         if: steps.lrs.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          cargo install librespot --version 0.8.0 --locked --no-default-features --features "native-tls,rodio-backend" --root lrs
-          mkdir -p bin && cp lrs/bin/librespot.exe bin/
+          git clone --depth 1 --branch v0.8.0 https://github.com/librespot-org/librespot lrs-src
+          cd lrs-src
+          for p in ../patches/*.patch; do git apply "$p"; done
+          cargo build --release --locked --no-default-features --features "native-tls,rodio-backend"
+          mkdir -p ../bin && cp target/release/librespot.exe ../bin/
       - name: Check engine
         shell: bash
         run: ls -la bin && ./bin/librespot.exe --version

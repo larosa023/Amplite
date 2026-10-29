@@ -1,0 +1,54 @@
+diff --git a/playback/src/player.rs b/playback/src/player.rs
+index 9c09be5..76b7e0a 100644
+--- a/playback/src/player.rs
++++ b/playback/src/player.rs
+@@ -1007,32 +1007,34 @@ impl PlayerTrackLoader {
+         );
+ 
+         // (Most) podcasts seem to support only 96 kbps Ogg Vorbis, so fall back to it
++        // Amplite: always prefer Ogg Vorbis (any quality) over MP3. Some accounts/regions
++        // only expose encrypted MP3 at the top bitrate, which can't be decrypted and would skip.
+         let formats = match self.config.bitrate {
+             Bitrate::Bitrate96 => [
+                 AudioFileFormat::OGG_VORBIS_96,
+-                AudioFileFormat::MP3_96,
+                 AudioFileFormat::OGG_VORBIS_160,
++                AudioFileFormat::OGG_VORBIS_320,
++                AudioFileFormat::MP3_96,
+                 AudioFileFormat::MP3_160,
+                 AudioFileFormat::MP3_256,
+-                AudioFileFormat::OGG_VORBIS_320,
+                 AudioFileFormat::MP3_320,
+             ],
+             Bitrate::Bitrate160 => [
+                 AudioFileFormat::OGG_VORBIS_160,
+-                AudioFileFormat::MP3_160,
++                AudioFileFormat::OGG_VORBIS_320,
+                 AudioFileFormat::OGG_VORBIS_96,
+-                AudioFileFormat::MP3_96,
++                AudioFileFormat::MP3_160,
+                 AudioFileFormat::MP3_256,
+-                AudioFileFormat::OGG_VORBIS_320,
+                 AudioFileFormat::MP3_320,
++                AudioFileFormat::MP3_96,
+             ],
+             Bitrate::Bitrate320 => [
+                 AudioFileFormat::OGG_VORBIS_320,
++                AudioFileFormat::OGG_VORBIS_160,
++                AudioFileFormat::OGG_VORBIS_96,
+                 AudioFileFormat::MP3_320,
+                 AudioFileFormat::MP3_256,
+-                AudioFileFormat::OGG_VORBIS_160,
+                 AudioFileFormat::MP3_160,
+-                AudioFileFormat::OGG_VORBIS_96,
+                 AudioFileFormat::MP3_96,
+             ],
+         };
+@@ -1054,6 +1056,7 @@ impl PlayerTrackLoader {
+                 }
+             };
+ 
++        info!("Amplite format: {format:?}");
+         let bytes_per_second = self.stream_data_rate(format)?;
+ 
+         // This is only a loop to be able to reload the file if an error occurred

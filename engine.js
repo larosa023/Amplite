@@ -25,6 +25,8 @@ class Engine {
     this.normalise = false;
     this.user = null;          // Spotify username the engine signed in as
     this.logs = [];            // last 300 log lines, for diagnostics
+    this.format = null;        // file format actually being streamed, e.g. OGG_VORBIS_320
+    this.junk = 0;             // undecodable-audio warnings for the current track
   }
 
   configure({ volume, bitrate, normalise } = {}) {
@@ -52,9 +54,16 @@ class Engine {
     this.send(this.status());
   }
 
-  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin, user: this.user, running: !!this.proc }; }
+  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin, user: this.user, running: !!this.proc, format: this.format, streamKbps: this.format ? +(this.format.match(/(\d+)$/) || [])[1] || null : null }; }
 
-  log(line) { this.logs.push(redact(line).slice(0, 400)); if (this.logs.length > 300) this.logs.splice(0, this.logs.length - 300); }
+  // Collapses repeats (e.g. thousands of decoder warnings) so the diagnostics stay readable.
+  log(line) {
+    const msg = redact(line).slice(0, 400), key = msg.replace(/^\[[^\]]*\]\s*/, '').replace(/\d+/g, '#');
+    const last = this.logs[this.logs.length - 1];
+    if (last && this.lastKey === key) { this.repeat = (this.repeat || 1) + 1; this.logs[this.logs.length - 1] = msg + `  (×${this.repeat})`; return; }
+    this.lastKey = key; this.repeat = 1;
+    this.logs.push(msg); if (this.logs.length > 300) this.logs.splice(0, this.logs.length - 300);
+  }
 
   start() {
     if (this.proc) return;
@@ -87,6 +96,13 @@ class Engine {
       const who = line.match(/Authenticated as '([^']+)'/i);
       if (/Browse to:/i.test(line)) this.set('auth', 'Approve Amplite in your browser (one time only)');
       else if (who) { this.user = who[1]; this.restarts = 0; this.set('ready', `Ready · ${this.bitrate} kbps`); }
+      else if (/Amplite format: (\w+)/.test(line)) {
+        this.format = line.match(/Amplite format: (\w+)/)[1]; this.junk = 0;
+        this.send(this.status());
+      }
+      else if (/symphonia_bundle_mp3.*(skipping junk|invalid mpeg)/i.test(line)) {
+        if (++this.junk === 40) this.log('!!! Amplite: this track came as an MP3 the engine could not decode (it will be skipped).');
+      }
       else if (/PremiumAccountRequired|premium account required|requires? (a )?premium/i.test(line)) this.set('error', 'This Spotify account isn’t Premium. Spotify only allows playback in apps like Amplite on Premium accounts.');
       else if (/Failed to get Spotify access token|Bad credentials|Login failed/i.test(line)) this.set('error', line.replace(/^.*?\]\s*/, '').slice(0, 160));
       if (process.env.AMPLITE_ENGINE_DEBUG) console.log('[engine]', line);

@@ -339,7 +339,7 @@ function renderEngine() {
   const el = $('#engineLine'); if (!el) return;
   const e = S.engine;
   const label = !e ? 'Checking…' : e.state === 'missing' ? 'Not included in this build — using Spotify’s web player'
-    : e.state === 'ready' ? `Ready · streaming at ${e.bitrate} kbps` : e.state === 'auth' ? 'Waiting for one-time approval in your browser'
+    : e.state === 'ready' ? (e.format ? `Ready · now streaming ${/MP3/.test(e.format) ? 'MP3' : 'Ogg Vorbis'} ${e.streamKbps} kbps${e.streamKbps && e.streamKbps < e.bitrate ? ` (${e.bitrate} isn’t available for this track on your account)` : ''}` : `Ready · ${e.bitrate} kbps`) : e.state === 'auth' ? 'Waiting for one-time approval in your browser'
     : e.state === 'error' ? 'Error: ' + (e.detail || 'unknown') : /restart/i.test(e.detail || '') ? 'Restarting…' : 'Starting…';
   const prob = accountProblem();
   el.className = 'engine-line ' + (prob ? 'error' : e?.state || '');
@@ -535,7 +535,7 @@ function updatePlayerUI() {
     dev.textContent = `On ${n.device}${canHere ? ' · Play here' : ''}`;
     dev.disabled = !canHere;
   } else dev.classList.add('hidden');
-  const kb = $('#ampKbps', ampEl); if (kb) kb.textContent = onEngine ? String(S.engine.bitrate) : (n?.source === 'sdk' ? '256' : '---');
+  const kb = $('#ampKbps', ampEl); if (kb) kb.textContent = onEngine ? String(S.engine.streamKbps || S.engine.bitrate) : (n?.source === 'sdk' ? '256' : '---');
   const aa = A.art; if (aa && (n?.album?.image || '') !== aa.getAttribute('src')) aa.setAttribute('src', n?.album?.image || '');
 
   if ((n?.uri || null) !== S.likedUri) checkLiked(n?.uri || null);
