@@ -17,7 +17,7 @@ const SCOPES = [
 const THEMES = [
   ['midnight', 'Midnight'], ['spotify', 'Spotify'], ['classic', 'Classic Amp'], ['nord', 'Nord'],
   ['dracula', 'Dracula'], ['sakura', 'Sakura'], ['ocean', 'Ocean'], ['paper', 'Paper'],
-  ['amoled', 'AMOLED Black'], ['amoled-red', 'AMOLED Red'], ['catppuccin', 'Catppuccin'], ['tokyo', 'Tokyo Night'],
+  ['amoled', 'AMOLED Black'], ['amoled-red', 'AMOLED Red'], ['amoled-pink', 'AMOLED Pink'], ['catppuccin', 'Catppuccin'], ['tokyo', 'Tokyo Night'],
   ['rosepine', 'Rosé Pine'], ['gruvbox', 'Gruvbox'], ['solarized', 'Solarized'], ['monokai', 'Monokai'],
   ['forest', 'Forest'], ['sunset', 'Sunset'], ['snow', 'Snow (light)'],
 ];
@@ -326,9 +326,14 @@ function activate() {
 }
 
 // Poll /me/player so Amplite also works as a remote for your phone / desktop app.
+// Every user action bumps this; a status check that started before the action is thrown away,
+// and for a moment afterwards what the user just did wins over Spotify's (slightly laggy) report.
+function acted(opt = {}) { S.actSeq = (S.actSeq || 0) + 1; S.opt = { ...opt, until: Date.now() + 1500 }; }
 async function poll() {
+  const seq = S.actSeq || 0;
   try {
     const d = await api('/me/player');
+    if ((S.actSeq || 0) !== seq) return; // stale: the user did something while this was in flight
     if (!d || !d.item) { if (S.now?.source === 'remote') { S.now = null; updatePlayerUI(); } return; }
     if (S.deviceId && d.device?.id === S.deviceId) return; // the SDK keeps us in sync
     const t = d.item;
@@ -339,10 +344,18 @@ async function poll() {
       duration: t.duration_ms, position: d.progress_ms, paused: !d.is_playing,
       shuffle: d.shuffle_state, repeat: { off: 0, context: 1, track: 2 }[d.repeat_state] ?? 0, ts: performance.now(),
     };
+    if (S.opt && Date.now() < S.opt.until) {
+      for (const k of ['paused', 'shuffle', 'repeat']) if (k in S.opt) S.now[k] = S.opt[k];
+      if ('position' in S.opt && S.opt.uri === t.uri) S.now.position = S.opt.position + (performance.now() - S.opt.ts);
+    }
+    // Volume changed on another device / in the Spotify app.
+    const vp = d.device?.volume_percent;
+    if (vp != null && Date.now() - (S.volAt || 0) > 2000 && Math.abs(vp / 100 - S.volume) > 0.01) { S.volume = vp / 100; syncVolume(); }
     updatePlayerUI();
   } catch {}
 }
 const pollSoon = (ms = 700) => setTimeout(poll, ms);
+const pollBurst = () => { pollSoon(350); pollSoon(1100); pollSoon(2200); };
 
 /* ---------------- audio engine (desktop app) ---------------- */
 async function findEngine(tries = 1) {
@@ -545,7 +558,7 @@ const fail = e => {
 
 async function startPlayback(body) {
   activate();
-  S.lastPlay = { body, t: Date.now() };
+  S.lastPlay = { body, t: Date.now() }; acted();
   const dev = await target();
   if (useEngine() && !dev) return;
   try {
@@ -570,44 +583,49 @@ function playUris(uris, idx = 0) {
 async function resume() {
   if (!S.now) return toast('Pick something to play first.');
   if (isLocal()) return S.player.resume();
-  try { await api('/me/player/play', { method: 'PUT' }); S.now.position = pos(); S.now.paused = false; S.now.ts = performance.now(); updatePlayerUI(); pollSoon(); } catch (e) { fail(e); }
+  acted({ paused: false }); S.now.position = pos(); S.now.paused = false; S.now.ts = performance.now(); updatePlayerUI();
+  try { await api('/me/player/play', { method: 'PUT' }); pollSoon(900); } catch (e) { S.opt = null; fail(e); pollSoon(200); }
 }
 async function pause() {
   if (!S.now) return;
   if (isLocal()) return S.player.pause();
-  try { await api('/me/player/pause', { method: 'PUT' }); S.now.position = pos(); S.now.paused = true; updatePlayerUI(); pollSoon(); } catch (e) { fail(e); }
+  acted({ paused: true }); S.now.position = pos(); S.now.paused = true; updatePlayerUI();
+  try { await api('/me/player/pause', { method: 'PUT' }); pollSoon(900); } catch (e) { S.opt = null; fail(e); pollSoon(200); }
 }
 const togglePlay = () => { activate(); return !S.now || S.now.paused ? resume() : pause(); };
 async function next() {
   if (isLocal()) return S.player.nextTrack();
-  try { await api('/me/player/next', { method: 'POST' }); pollSoon(); } catch (e) { fail(e); }
+  acted(); try { await api('/me/player/next', { method: 'POST' }); pollBurst(); } catch (e) { fail(e); }
 }
 async function prev() {
   if (isLocal()) return S.player.previousTrack();
-  try { await api('/me/player/previous', { method: 'POST' }); pollSoon(); } catch (e) { fail(e); }
+  acted(); try { await api('/me/player/previous', { method: 'POST' }); pollBurst(); } catch (e) { fail(e); }
 }
 async function seek(ms) {
   if (!S.now) return;
   ms = Math.max(0, Math.round(ms));
   S.now.position = ms; S.now.ts = performance.now();
   if (isLocal()) return S.player.seek(ms);
-  try { await api('/me/player/seek', { method: 'PUT', query: { position_ms: ms } }); } catch (e) { fail(e); }
+  acted({ position: ms, uri: S.now.uri, ts: performance.now() });
+  try { await api('/me/player/seek', { method: 'PUT', query: { position_ms: ms } }); pollSoon(1200); } catch (e) { fail(e); }
 }
-async function stop() { await pause(); await seek(0); }
+async function stop() { await pause(); await seek(0); if (S.now) { S.now.paused = true; S.opt = { ...S.opt, paused: true }; updatePlayerUI(); } }
 async function toggleShuffle() {
   if (!S.now) return;
-  const v = !S.now.shuffle;
-  try { await api('/me/player/shuffle', { method: 'PUT', query: { state: v } }); S.now.shuffle = v; updatePlayerUI(); } catch (e) { fail(e); }
+  const v = !S.now.shuffle, was = S.now.shuffle;
+  acted({ shuffle: v }); S.now.shuffle = v; updatePlayerUI();
+  try { await api('/me/player/shuffle', { method: 'PUT', query: { state: v } }); } catch (e) { S.opt = null; S.now.shuffle = was; updatePlayerUI(); fail(e); }
 }
 async function cycleRepeat() {
   if (!S.now) return;
-  const v = ((S.now.repeat || 0) + 1) % 3;
-  try { await api('/me/player/repeat', { method: 'PUT', query: { state: ['off', 'context', 'track'][v] } }); S.now.repeat = v; updatePlayerUI(); } catch (e) { fail(e); }
+  const v = ((S.now.repeat || 0) + 1) % 3, was = S.now.repeat;
+  acted({ repeat: v }); S.now.repeat = v; updatePlayerUI();
+  try { await api('/me/player/repeat', { method: 'PUT', query: { state: ['off', 'context', 'track'][v] } }); } catch (e) { S.opt = null; S.now.repeat = was; updatePlayerUI(); fail(e); }
 }
 let volT;
 function setVolume(v) {
   v = Math.max(0, Math.min(1, v));
-  S.volume = v; store.set('volume', v); if (v > 0) S.lastVol = v;
+  S.volume = v; store.set('volume', v); if (v > 0) S.lastVol = v; S.volAt = Date.now();
   try { S.player?.setVolume(v)?.catch?.(() => {}); } catch {}
   if (S.now?.source === 'remote') {
     clearTimeout(volT);
@@ -644,7 +662,11 @@ async function toggleLike() {
     toast(was ? 'Removed from Liked Songs' : 'Added to Liked Songs');
   } catch (e) { S.liked = was; renderLike(); toast(e.message); }
 }
-const renderLike = () => $('#likeBtn').classList.toggle('liked', S.liked);
+const renderLike = () => {
+  $('#likeBtn').classList.toggle('liked', S.liked);
+  const al = $('[data-amp="like"]', ampEl);
+  if (al) { al.classList.toggle('on', S.liked); al.textContent = S.liked ? '♥' : '♡'; al.title = S.liked ? 'Remove from Liked Songs' : 'Save to Liked Songs'; }
+};
 
 /* ---------------- player UI ---------------- */
 function setRange(el, frac) {
@@ -667,6 +689,9 @@ function updatePlayerUI() {
   $('#repBtn').classList.toggle('on', !!n?.repeat);
   $('#repBtn').classList.toggle('one', n?.repeat === 2);
   A.shuf.classList.toggle('on', !!n?.shuffle);
+  $('[data-amp="play"]', ampEl)?.classList.toggle('lit', !!n && !n.paused);
+  $('[data-amp="pause"]', ampEl)?.classList.toggle('lit', !!n && n.paused && pos() > 500);
+  $('[data-amp="stop"]', ampEl)?.classList.toggle('lit', !n || (n.paused && pos() <= 500));
   A.rep.classList.toggle('on', !!n?.repeat);
   A.rep.textContent = n?.repeat === 2 ? 'REP1' : 'REP';
   A.dev.textContent = n?.device || 'stereo';
@@ -1324,13 +1349,21 @@ function startViz() {
   if (!vizWanted()) return;
   const id = ++vizId; vizRunning = true;
   const win = S.ampWin || window;
+  let lastFrame = performance.now();
   const step = t => {
     if (id !== vizId) return;
     if (!vizWanted()) { vizRunning = false; return; } // stop the loop entirely when nobody's looking
+    lastFrame = performance.now();
     drawAmp(t);
     win.requestAnimationFrame(step);
   };
   win.requestAnimationFrame(step);
+  // Safety net: if the window stops getting animation frames (Windows sometimes thinks it's covered),
+  // keep the clock, title and visualizer moving with a plain timer.
+  const guard = setInterval(() => {
+    if (id !== vizId || !vizWanted()) { clearInterval(guard); return; }
+    if (performance.now() - lastFrame > 250) drawAmp(performance.now());
+  }, 100);
 }
 const SCROLL_MS = { slow: 380, normal: 220, fast: 110 };
 function drawAmp(t) {
@@ -1485,7 +1518,7 @@ function bind() {
     const b = e.target.closest('[data-amp]'); if (!b) return;
     activate();
     ({
-      prev, next, stop, shuffle: toggleShuffle, repeat: cycleRepeat,
+      prev, next, stop, shuffle: toggleShuffle, repeat: cycleRepeat, like: toggleLike,
       play: () => (S.now && !S.now.paused ? seek(0) : resume()),
       pause: () => (S.now?.paused ? resume() : pause()),
       popout: ampPopToggle, close: ampClose, eq: toggleAmpEq,
@@ -1823,7 +1856,9 @@ function bindPrefetch() {
 function schedulePoll() {
   const visible = !document.hidden || ampOpen();
   const playing = S.now && !S.now.paused;
-  const ms = !visible ? 15000 : playing ? 3000 : 8000;
+  let ms = !visible ? 15000 : playing ? 3000 : 8000;
+  // Check right when the current song should end, so the next one shows up immediately.
+  if (playing && S.now.duration) ms = Math.min(ms, Math.max(300, S.now.duration - pos() + 400));
   clearTimeout(S.pollT);
   S.pollT = setTimeout(async () => { await poll(); schedulePoll(); }, ms);
 }

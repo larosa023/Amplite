@@ -23,7 +23,9 @@ let prefs = { closeToTray: true, startup: 'off', hwAccel: true };
 try { prefs = { ...prefs, ...JSON.parse(fs.readFileSync(prefsFile(), 'utf8')) }; } catch {}
 if (prefs.hwAccel === false) app.disableHardwareAcceleration(); // saves the GPU process (~100 MB)
 // Lighter Chromium: no hardware media-key handler (we use our own global shortcuts), capped disk cache.
-app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,SpareRendererForSitePerProcess');
+// CalculateNativeWinOcclusion: Chromium can wrongly think a small window that straddles two monitors
+// is covered and stop painting it (the mini amp froze). Turning that detection off keeps it live.
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,SpareRendererForSitePerProcess,CalculateNativeWinOcclusion');
 app.commandLine.appendSwitch('disk-cache-size', String(64 * 1024 * 1024));
 const startupMode = (process.argv.find(a => a.startsWith('--startup=')) || '').split('=')[1] || 'normal';
 let quitting = false;
@@ -119,7 +121,9 @@ function createMain() {
       if (x >= area.x - 20 && y >= area.y - 20 && x < area.x + area.width - 40 && y < area.y + area.height - 40) win.setPosition(x, y);
     } catch {}
     let t;
-    win.on('moved', () => { clearTimeout(t); t = setTimeout(() => snapAmp(win), 60); });
+    // Windows fires 'moved' when you let go after dragging; other systems only fire 'move'.
+    if (process.platform === 'win32') win.on('moved', () => { clearTimeout(t); t = setTimeout(() => snapAmp(win), 60); });
+    else win.on('move', () => { clearTimeout(t); t = setTimeout(() => snapAmp(win), 300); });
     win.on('closed', () => { if (ampWin === win) ampWin = null; });
   });
   // Keep in-app navigation on our origin or Spotify's login pages.
@@ -225,21 +229,41 @@ ipcMain.on('now-playing', (_e, n = {}) => {
   tray.setContextMenu(trayMenu());
 });
 // Snap the mini amp to screen edges/corners when dropped within 24 px of them, and remember the spot.
-function snapAmp(win, corner) {
+// Snap the mini amp to screen edges/corners when dropped within 24 px of them, and always keep it
+// entirely on ONE monitor (never hanging over onto the next screen). Remembers the spot.
+function snapAmp(win, corner, again = true) {
   if (!win || win.isDestroyed()) return;
   const { screen } = require('electron');
-  const b = win.getBounds(), area = screen.getDisplayMatching(b).workArea, T = 24;
+  const b = win.getBounds();
+  // The monitor that holds the centre of the amp is "its" monitor.
+  const disp = screen.getDisplayNearestPoint({ x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) });
+  const area = disp.workArea, T = 24;
+  // Edges shared with another monitor get a 1 px margin, so DPI rounding can't push the amp across.
+  const others = screen.getAllDisplays().filter(d => d.id !== disp.id).map(d => d.bounds);
+  const touches = side => others.some(o => side === 'l' ? Math.abs(o.x + o.width - disp.bounds.x) <= 1 && o.y < area.y + area.height && o.y + o.height > area.y
+    : side === 'r' ? Math.abs(o.x - (disp.bounds.x + disp.bounds.width)) <= 1 && o.y < area.y + area.height && o.y + o.height > area.y
+    : side === 't' ? Math.abs(o.y + o.height - disp.bounds.y) <= 1 && o.x < area.x + area.width && o.x + o.width > area.x
+    : Math.abs(o.y - (disp.bounds.y + disp.bounds.height)) <= 1 && o.x < area.x + area.width && o.x + o.width > area.x);
+  const L = area.x + (touches('l') ? 1 : 0), R = area.x + area.width - (touches('r') ? 1 : 0);
+  const Tp = area.y + (touches('t') ? 1 : 0), B = area.y + area.height - (touches('b') ? 1 : 0);
   let { x, y } = b;
   if (corner) {
-    x = corner.includes('l') ? area.x : area.x + area.width - b.width;
-    y = corner.includes('t') ? area.y : area.y + area.height - b.height;
+    x = corner.includes('l') ? L : R - b.width;
+    y = corner.includes('t') ? Tp : B - b.height;
   } else if (ampOpts.snap) {
-    if (Math.abs(x - area.x) < T) x = area.x;
-    if (Math.abs(area.x + area.width - (x + b.width)) < T) x = area.x + area.width - b.width;
-    if (Math.abs(y - area.y) < T) y = area.y;
-    if (Math.abs(area.y + area.height - (y + b.height)) < T) y = area.y + area.height - b.height;
+    if (Math.abs(x - L) < T) x = L;
+    if (Math.abs(R - (x + b.width)) < T) x = R - b.width;
+    if (Math.abs(y - Tp) < T) y = Tp;
+    if (Math.abs(B - (y + b.height)) < T) y = B - b.height;
   }
-  if (x !== b.x || y !== b.y) win.setPosition(x, y);
+  // Never straddle monitors: clamp fully inside this one.
+  x = Math.min(Math.max(x, L), R - b.width);
+  y = Math.min(Math.max(y, Tp), B - b.height);
+  if (x !== b.x || y !== b.y) {
+    win.setBounds({ x, y, width: b.width, height: b.height });
+    // Windows may rescale the window when it changes monitor (different DPI); check once more.
+    if (again) setTimeout(() => snapAmp(win, corner, false), 120);
+  }
   try { fs.writeFileSync(ampPosFile(), JSON.stringify({ x, y })); } catch {}
 }
 ipcMain.on('amp-window', (_e, o = {}) => {
