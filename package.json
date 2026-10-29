@@ -1,7 +1,7 @@
 {
   "name": "amplite",
   "productName": "Amplite",
-  "version": "1.6.3",
+  "version": "1.7.0",
   "description": "A lightweight Spotify desktop player with themes and a mini amp.",
   "main": "main.js",
   "author": "larosa023",

@@ -67,6 +67,7 @@ function setK(k, v) {
   parts.reduce((o, p) => o[p], CFG)[last] = v;
   store.set('cfg', CFG);
   if (k === 'amp.lyricLine') syncLyricsForTrack();
+  if (k === 'amp.corner') setTimeout(() => fitAmp(true), 0);
   if (k.startsWith('eq.')) applyEq();
   else if (k.startsWith('amp.')) applyAmp();
   else if (k.startsWith('ui.')) applyUI();
@@ -221,6 +222,11 @@ async function api(path, { method = 'GET', body, query, fresh = false } = {}, re
   }
   if (cacheable(method, url)) {
     apiCache.set(url, { t: Date.now(), data });
+    if (apiCache.size > 250) { // keep memory flat over long sessions: drop expired, then oldest
+      const now = Date.now();
+      for (const [k, v] of apiCache) if (now - v.t > 120000) apiCache.delete(k);
+      while (apiCache.size > 200) apiCache.delete(apiCache.keys().next().value);
+    }
     if (SWR.test(url) && !fresh) store.set('swr:' + url, { t: Date.now(), data });
   }
   return data;
@@ -280,6 +286,15 @@ const playMode = () => {
 const useEngine = () => IS_APP && playMode() === 'engine' && S.engine && S.engine.state !== 'missing';
 const useApp = () => IS_APP && playMode() === 'app';
 const useWeb = () => IS_APP && playMode() === 'web';
+// Is the main window really on screen? With background throttling off (needed for audio timing),
+// Electron reports hidden/minimised windows as visible, so the main process tells us directly.
+let winHidden = false;
+const mainHidden = () => document.hidden || winHidden;
+function onWinVisibility(visible) {
+  const was = winHidden; winHidden = !visible;
+  if (was && visible) { if (S.markDirty) markPlaying(); updatePlayerUI(); poll(); schedulePoll(); startViz(); }
+  else if (!was && !visible) schedulePoll();
+}
 const pos = () => {
   const n = S.now; if (!n) return 0;
   return n.paused ? n.position : Math.min(n.duration, n.position + (performance.now() - n.ts));
@@ -330,10 +345,13 @@ function activate() {
 // and for a moment afterwards what the user just did wins over Spotify's (slightly laggy) report.
 function acted(opt = {}) { S.actSeq = (S.actSeq || 0) + 1; S.opt = { ...opt, until: Date.now() + 1500 }; }
 async function poll() {
-  const seq = S.actSeq || 0;
+  const seq = S.actSeq || 0, mine = S.pollIssued = (S.pollIssued || 0) + 1;
   try {
     const d = await api('/me/player');
+    S.pollFails = 0; S.pollOkAt = Date.now();
     if ((S.actSeq || 0) !== seq) return; // stale: the user did something while this was in flight
+    if (mine < (S.pollApplied || 0)) return; // an older check finished after a newer one
+    S.pollApplied = mine;
     if (!d || !d.item) { if (S.now?.source === 'remote') { S.now = null; updatePlayerUI(); } return; }
     if (S.deviceId && d.device?.id === S.deviceId) return; // the SDK keeps us in sync
     const t = d.item;
@@ -352,7 +370,7 @@ async function poll() {
     const vp = d.device?.volume_percent;
     if (vp != null && Date.now() - (S.volAt || 0) > 2000 && Math.abs(vp / 100 - S.volume) > 0.01) { S.volume = vp / 100; syncVolume(); }
     updatePlayerUI();
-  } catch {}
+  } catch { S.pollFails = (S.pollFails || 0) + 1; }
 }
 const pollSoon = (ms = 700) => setTimeout(poll, ms);
 const pollBurst = () => { pollSoon(350); pollSoon(1100); pollSoon(2200); };
@@ -396,7 +414,7 @@ async function webTarget() {
   if (!S.appHost) { try { S.appHost = (await window.amplite.spotifyApp('check')).host; } catch {} }
   initSDK();
   for (let i = 0; i < 40 && !S.deviceId && useWeb(); i++) await sleep(250);
-  if (!S.deviceId) { webFail('the web player didn’t start'); return useApp() ? spotifyAppTarget() : undefined; }
+  if (!S.deviceId) { webFail('the web player didn’t start'); return undefined; } // webFail re-sends the play request to the next source
   return S.deviceId;
 }
 // Watchdog: if the web player "plays" but the position never moves, DRM was refused silently.
@@ -525,7 +543,7 @@ function initEngine() {
       if (prob?.kind === 'mismatch') { toast('The audio engine is signed into a different Spotify account.'); openSettings('audio'); }
     }
     if (st.keyRefused && CFG.audio.source === 'auto' && !engineRefused() && S.me?.id && (!st.user || st.user.toLowerCase() === S.me.id.toLowerCase())) {
-      store.set(refusedKey(), true);
+      store.set(refusedKey(), true); S.lastMode = playMode();
       toast(webBlocked() ? 'Spotify won’t let the built-in engine play for this account — switching to the Spotify app.' : 'Spotify won’t let the built-in engine play for this account — switching to Amplite’s web player.');
       window.amplite.engineStop();
       if (S.now && S.now.device === st.name) playHere();
@@ -559,7 +577,9 @@ const fail = e => {
 async function startPlayback(body) {
   activate();
   S.lastPlay = { body, t: Date.now() }; acted();
+  const mySeq = S.playSeq = (S.playSeq || 0) + 1;
   const dev = await target();
+  if (mySeq !== S.playSeq) return; // a newer click happened while we waited for the device
   if (useEngine() && !dev) return;
   try {
     await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body });
@@ -669,11 +689,16 @@ const renderLike = () => {
 };
 
 /* ---------------- player UI ---------------- */
+// Only touch the DOM when something visibly changes: each write costs a style/paint pass,
+// and these run several times a second.
 function setRange(el, frac) {
   frac = Math.max(0, Math.min(1, frac || 0));
-  el.value = Math.round(frac * el.max);
-  el.style.setProperty('--p', frac * 100 + '%');
+  const v = Math.round(frac * el.max);
+  if (el._v === v) return;
+  el._v = v; el.value = v;
+  el.style.setProperty('--p', (v / el.max) * 100 + '%');
 }
+function setText(el, txt) { if (el && el._t !== txt) { el._t = txt; el.textContent = txt; } }
 const artistLinks = arr => (arr || []).map(a => a.id ? `<a data-open="artist:${esc(a.id)}">${esc(a.name)}</a>` : esc(a.name)).join(', ');
 
 function updatePlayerUI() {
@@ -725,16 +750,20 @@ function updatePlayerUI() {
   markPlaying();
 }
 function markPlaying() {
+  if (mainHidden()) { S.markDirty = true; return; } // done when the window is shown again
+  S.markDirty = false;
   const uri = S.now?.uri;
   $$('.trow.playing').forEach(r => r.classList.remove('playing'));
   if (uri) $$(`.trow[data-uri="${CSS.escape(uri)}"]`).forEach(r => r.classList.add('playing'));
 }
+const TB = {};
 function tickBar() {
+  if (!TB.cur) { TB.cur = $('#tCur'); TB.dur = $('#tDur'); TB.seek = $('#seek'); }
   if (D.lines.length) tickLyrics();
-  if (document.hidden) return;
+  if (mainHidden()) return;
   const n = S.now, d = n?.duration || 0, p = pos();
-  if (!S.seeking) { $('#tCur').textContent = fmt(p); setRange($('#seek'), d ? p / d : 0); }
-  $('#tDur').textContent = fmt(d);
+  if (!S.seeking) { setText(TB.cur, fmt(p)); setRange(TB.seek, d ? p / d : 0); }
+  setText(TB.dur, fmt(d));
 }
 function syncVolume() {
   setRange($('#vol'), S.volume);
@@ -774,20 +803,37 @@ function card({ kind, id, uri, title, sub, image, round }) {
     <div class="card-title">${esc(title)}</div><div class="card-sub">${esc(sub || '')}</div></div>`;
 }
 
-function trackRows(tracks, { showAlbum, showArt }) {
-  return tracks.map((t, i) => `<div class="trow ${t.playable ? '' : 'dim'}" data-idx="${i}" data-uri="${esc(t.uri)}" data-q="${esc(`${t.name} ${t.artists.map(a => a.name).join(' ')} ${t.album?.name || ''}`.toLowerCase())}">
+function trackRows(tracks, { showAlbum, showArt }, offset = 0) {
+  return tracks.map((t, j) => { const i = j + offset; return `<div class="trow ${t.playable ? '' : 'dim'}" data-idx="${i}" data-uri="${esc(t.uri)}" data-q="${esc(`${t.name} ${t.artists.map(a => a.name).join(' ')} ${t.album?.name || ''}`.toLowerCase())}">
       <div class="tnum"><span>${i + 1}</span>${svg('play')}</div>
       <div class="tmain">${showArt && t.album?.image ? `<img src="${esc(t.album.image)}" alt="" loading="lazy" decoding="async">` : ''}
         <div class="ttext"><div class="tname">${esc(t.name)}</div><div class="tartist">${artistLinks(t.artists)}</div></div></div>
       ${showAlbum ? `<div class="talbum">${t.album?.id ? `<a data-open="album:${esc(t.album.id)}">${esc(t.album.name)}</a>` : esc(t.album?.name || '')}</div>` : ''}
-      <div class="tdur">${fmt(t.duration)}</div></div>`).join('');
+      <div class="tdur">${fmt(t.duration)}</div></div>`; }).join('');
 }
+// Long lists: render the first rows immediately and the rest in small chunks between frames,
+// so opening a 2,000-song library never blocks the window.
+const FIRST_ROWS = 150, CHUNK_ROWS = 250;
 function trackTable(tracks, { context = null, showAlbum = true, showArt = true } = {}) {
   const li = S.lists.push({ tracks, orig: tracks, context, showAlbum, showArt }) - 1;
+  if (tracks.length > FIRST_ROWS) setTimeout(() => fillRows(li), 0);
   return `<div class="tracks ${showAlbum ? '' : 'no-album'}" data-list="${li}">
     <div class="thead"><span>#</span><span>Title</span>${showAlbum ? '<span>Album</span>' : ''}<span class="tdur">${svg('clock')}</span></div>
-    <div class="tbody">${trackRows(tracks, { showAlbum, showArt })}</div>
+    <div class="tbody">${trackRows(tracks.slice(0, FIRST_ROWS), { showAlbum, showArt })}</div>
   </div>`;
+}
+function fillRows(li, from = FIRST_ROWS) {
+  const L = S.lists[li], body = $(`.tracks[data-list="${li}"] .tbody`);
+  if (!L || !body) return; // navigated away
+  const gen = L.gen = (L.gen || 0) + (from === FIRST_ROWS ? 1 : 0);
+  const step = start => {
+    if (L.gen !== gen || !body.isConnected) return; // list was re-sorted or the page changed
+    const part = L.tracks.slice(start, start + CHUNK_ROWS);
+    if (!part.length) { applyListFilter(); markPlaying(); return; }
+    body.insertAdjacentHTML('beforeend', trackRows(part, L, start));
+    requestAnimationFrame(() => step(start + CHUNK_ROWS));
+  };
+  requestAnimationFrame(() => step(from));
 }
 
 /* ---- filter / sort / shuffle for the page's main track list ---- */
@@ -817,7 +863,8 @@ function applyListSort(key) {
   const L = S.lists[0], tbl = $('.tracks[data-list="0"] .tbody'); if (!L || !tbl) return;
   const cmp = SORTS[key]?.[1];
   L.tracks = cmp ? [...L.orig].sort(cmp) : L.orig;
-  tbl.innerHTML = trackRows(L.tracks, L);
+  tbl.innerHTML = trackRows(L.tracks.slice(0, FIRST_ROWS), L);
+  if (L.tracks.length > FIRST_ROWS) fillRows(0);
   store.set('sort:' + S.cur?.name, key);
   applyListFilter(); markPlaying();
 }
@@ -1094,6 +1141,8 @@ async function loadLyrics(n) {
     return { synced: parseLrc(r.syncedLyrics), plain: r.plainLyrics || '' };
   })().catch(() => ({ none: true }));
   D.lyrics.set(n.id, p);
+  if (D.lyrics.size > 60) D.lyrics.delete(D.lyrics.keys().next().value);
+  p.then(r => { if (r?.error) D.lyrics.delete(n.id); }); // don't remember network errors as "no lyrics"
   return p;
 }
 async function renderLyrics() {
@@ -1261,7 +1310,7 @@ async function openPip() {
   w.addEventListener('pagehide', onAmpWinClosed);
   if (IS_APP) {
     // Fit the window to the amp, then tuck the main window away.
-    await fitAmp();
+    await fitAmp(true);
     window.amplite.setMainVisible(false);
   }
   startViz();
@@ -1330,7 +1379,7 @@ function applyAmp() {
   fitAmp();
 }
 // Resize the pop-out window to the amp and apply window options.
-async function fitAmp() {
+async function fitAmp(useCorner = false) {
   if (!S.ampWin || !IS_APP) return;
   await new Promise(r => S.ampWin.requestAnimationFrame(r));
   const r = ampEl.getBoundingClientRect(), z = CFG.amp.scale || 1;
@@ -1338,13 +1387,15 @@ async function fitAmp() {
   const w = Math.ceil(r.width * (r.width < ampEl.offsetWidth * z - 2 ? z : 1));
   const h = Math.ceil(r.height * (r.height < ampEl.offsetHeight * z - 2 ? z : 1));
   try { S.ampWin.resizeTo(w, h); } catch {}
-  window.amplite.ampWindow({ opacity: CFG.amp.opacity / 100, onTop: CFG.amp.onTop, snap: CFG.amp.snap, corner: CFG.amp.corner !== 'none' ? CFG.amp.corner : null });
+  // Corner placement only when the amp opens or the corner setting changes; after other changes
+  // (e.g. the EQ panel making it taller) just keep it fully on screen where the user put it.
+  window.amplite.ampWindow({ opacity: CFG.amp.opacity / 100, onTop: CFG.amp.onTop, snap: CFG.amp.snap, corner: useCorner && CFG.amp.corner !== 'none' ? CFG.amp.corner : null, clamp: true });
 }
 
 // Simulated spectrum (Spotify's DRM audio can't be analysed in the browser).
 const V = { h: new Float32Array(19), pk: new Float32Array(19), tg: new Float32Array(19), lastT: 0, lastTxt: 0, lastMarq: 0, lastFrame: 0, off: 0, text: '', idle: false };
 let vizId = 0, vizRunning = false;
-const vizWanted = () => ampOpen() || S.ampPreview;
+const vizWanted = () => ampOpen() || (S.ampPreview && !mainHidden());
 function startViz() {
   if (!vizWanted()) return;
   const id = ++vizId; vizRunning = true;
@@ -1356,14 +1407,16 @@ function startViz() {
     if (!vizWanted()) { vizRunning = false; return; } // stop the loop entirely when nobody's looking
     lastFrame = performance.now();
     drawAmp();
-    win.requestAnimationFrame(step);
+    // Paused with the bars settled: nothing moves but the scrolling title, so tick 4x/s instead of 60.
+    if (V.idle && !(S.now && !S.now.paused)) setTimeout(() => win.requestAnimationFrame(step), 250);
+    else win.requestAnimationFrame(step);
   };
   win.requestAnimationFrame(step);
   // Safety net: if the window stops getting animation frames (Windows sometimes thinks it's covered),
   // keep the clock, title and visualizer moving with a plain timer.
   const guard = setInterval(() => {
     if (id !== vizId || !vizWanted()) { clearInterval(guard); return; }
-    if (performance.now() - lastFrame > 250) drawAmp();
+    if (performance.now() - lastFrame > 400) drawAmp();
   }, 100);
 }
 const SCROLL_MS = { slow: 380, normal: 220, fast: 110 };
@@ -1378,21 +1431,21 @@ function drawAmp() {
   if (t - V.lastTxt > 200) {
     V.lastTxt = t;
     const p = pos(), d = n?.duration || 0;
-    A.time.textContent = S.ampRemain && d ? '-' + fmt(d - p, true) : fmt(p, true);
-    A.state.textContent = !n ? '■' : n.paused ? '❚❚' : '▶';
+    setText(A.time, S.ampRemain && d ? '-' + fmt(d - p, true) : fmt(p, true));
+    setText(A.state, !n ? '■' : n.paused ? '❚❚' : '▶');
     if (!S.ampSeeking) setRange(A.seek, d ? p / d : 0);
   }
   if (c.marquee) {
     const txt = c.lyricLine && S.lyricLine ? '♪ ' + S.lyricLine : n ? `${n.artists.map(a => a.name).join(', ')} - ${n.name} (${fmt(n.duration)})` : 'AMPLITE  ·  PICK A SONG TO START';
-    if (c.scroll === 'static') { if (txt !== V.text) { V.text = txt; A.marq.textContent = txt; } }
+    if (c.scroll === 'static') { if (txt !== V.text) { V.text = txt; setText(A.marq, txt); } }
     else if (t - V.lastMarq > (SCROLL_MS[c.scroll] || 220)) {
       V.lastMarq = t;
       const full = txt + '   ***   ';
       if (full !== V.text) { V.text = full; V.off = 0; } else V.off = (V.off + 1) % full.length;
-      A.marq.textContent = full.slice(V.off) + full.slice(0, V.off);
+      setText(A.marq, full.slice(V.off) + full.slice(0, V.off));
     }
   }
-  if (c.viz === 'off') return;
+  if (c.viz === 'off') { V.idle = !playing; return; }
   const N = V.h.length;
   // Nothing moving and nothing to decay: skip the canvas work.
   if (!playing && V.idle) return;
@@ -1480,7 +1533,7 @@ function bind() {
 
   const seekBar = $('#seek');
   seekBar.oninput = () => { S.seeking = true; const f = seekBar.value / seekBar.max; seekBar.style.setProperty('--p', f * 100 + '%'); $('#tCur').textContent = fmt(f * (S.now?.duration || 0)); };
-  seekBar.onchange = () => { seek(seekBar.value / seekBar.max * (S.now?.duration || 0)); S.seeking = false; };
+  seekBar.onchange = () => { seek(seekBar.value / seekBar.max * (S.now?.duration || 0)); S.seeking = false; seekBar._v = null; };
   $('#vol').oninput = e => setVolume(e.target.value / 100);
 
   // Theme + user popovers
@@ -1530,7 +1583,7 @@ function bind() {
   });
   A.time.onclick = () => { S.ampRemain = !S.ampRemain; };
   A.seek.oninput = () => { S.ampSeeking = true; A.seek.style.setProperty('--p', A.seek.value / A.seek.max * 100 + '%'); };
-  A.seek.onchange = () => { seek(A.seek.value / A.seek.max * (S.now?.duration || 0)); S.ampSeeking = false; };
+  A.seek.onchange = () => { seek(A.seek.value / A.seek.max * (S.now?.duration || 0)); S.ampSeeking = false; A.seek._v = null; };
   A.vol.oninput = () => setVolume(A.vol.value / 100);
 }
 
@@ -1858,15 +1911,18 @@ function bindPrefetch() {
 }
 // Poll fast while music is playing and someone can see it, slowly otherwise.
 function schedulePoll() {
-  const visible = !document.hidden || ampOpen();
+  const visible = !mainHidden() || ampOpen();
   const playing = S.now && !S.now.paused;
-  let ms = !visible ? 15000 : playing ? 3000 : 8000;
-  // Check right when the current song should end, so the next one shows up immediately.
-  if (playing && S.now.duration) ms = Math.min(ms, Math.max(300, S.now.duration - pos() + 400));
+  let ms = !visible ? 15000 : playing ? 3000 : 4000;
+  // Check right when the current song should end, so the next one shows up immediately
+  // (only while Spotify is answering; otherwise this would spin every 400 ms).
+  if (playing && visible && S.now.duration && Date.now() - (S.pollOkAt || 0) < 10000) ms = Math.min(ms, Math.max(1000, S.now.duration - pos() + 400));
+  // Offline / signed out: back off up to a minute.
+  if (S.pollFails) ms = Math.min(60000, 3000 * 2 ** Math.min(S.pollFails, 5));
   clearTimeout(S.pollT);
   S.pollT = setTimeout(async () => { await poll(); schedulePoll(); }, ms);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { poll(); schedulePoll(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (S.markDirty) markPlaying(); poll(); schedulePoll(); startViz(); } });
 
 /* ---------------- boot ---------------- */
 function showLogin(err) {
@@ -1881,6 +1937,7 @@ async function boot() {
     try { S.appVersion = (await window.amplite.info()).version; } catch {}
     document.documentElement.classList.add('is-app');
     window.amplite.onMedia(cmd => ({ toggle: togglePlay, next, prev, stop, amp: toggleAmp })[cmd]?.());
+    window.amplite.onWindowVisible?.(onWinVisibility);
     $('[data-amp="popout"]').remove();
     $('[data-amp="close"]').title = 'Back to full player';
     $('.amp-hint').textContent = '';

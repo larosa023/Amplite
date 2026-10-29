@@ -31,7 +31,9 @@ const startupMode = (process.argv.find(a => a.startsWith('--startup=')) || '').s
 let quitting = false;
 app.on('before-quit', () => { quitting = true; });
 
-if (!app.requestSingleInstanceLock()) app.quit();
+// Only one Amplite at a time: a second launch just focuses the first one and exits right away.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.exit(0);
 app.on('second-instance', () => {
   if (!mainWin) return;
   if (!mainWin.isVisible()) mainWin.show();
@@ -42,15 +44,22 @@ app.on('second-instance', () => {
 function startServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
-      let file = path.normalize(path.join(ROOT, decodeURIComponent(url.pathname)));
-      if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
-      if (url.pathname === '/' || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(ROOT, 'index.html');
-      fs.readFile(file, (err, data) => {
-        if (err) { res.writeHead(404); return res.end(); }
-        res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-        res.end(data);
-      });
+      try {
+        const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+        let file = path.normalize(path.join(ROOT, decodeURIComponent(url.pathname)));
+        if (file !== ROOT && !file.startsWith(ROOT + path.sep)) { res.writeHead(403); return res.end(); }
+        let st = null; try { st = fs.statSync(file); } catch {}
+        if (url.pathname === '/' || !st || st.isDirectory()) { file = path.join(ROOT, 'index.html'); st = fs.statSync(file); }
+        // Revalidate instead of no-store: lets Chromium keep its compiled-code cache between launches,
+        // while an update (new file) is still picked up immediately.
+        const etag = `"${st.size}-${Math.round(st.mtimeMs)}"`;
+        if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); return res.end(); }
+        fs.readFile(file, (err, data) => {
+          if (err) { res.writeHead(404); return res.end(); }
+          res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache', ETag: etag });
+          res.end(data);
+        });
+      } catch { res.writeHead(400); res.end(); }
     });
     server.once('error', reject);
     server.listen(PORT, '127.0.0.1', () => resolve(server));
@@ -60,9 +69,14 @@ function startServer() {
 function loadBounds() {
   try { return JSON.parse(fs.readFileSync(boundsFile(), 'utf8')); } catch { return {}; }
 }
+let boundsT;
 function saveBounds() {
-  if (!mainWin || mainWin.isMinimized() || !mainWin.isVisible()) return;
-  try { fs.writeFileSync(boundsFile(), JSON.stringify({ ...mainWin.getNormalBounds(), maximized: mainWin.isMaximized() })); } catch {}
+  // Debounced: dragging fires dozens of move events; write once it settles.
+  clearTimeout(boundsT);
+  boundsT = setTimeout(() => {
+    if (!mainWin || mainWin.isDestroyed() || mainWin.isMinimized() || !mainWin.isVisible()) return;
+    fs.writeFile(boundsFile(), JSON.stringify({ ...mainWin.getNormalBounds(), maximized: mainWin.isMaximized() }), () => {});
+  }, 500);
 }
 
 function createMain() {
@@ -91,6 +105,11 @@ function createMain() {
   mainWin.on('resize', saveBounds);
   mainWin.on('move', saveBounds);
   mainWin.on('closed', () => { mainWin = null; app.quit(); });
+  // Tell the page whether it's really on screen (hidden to tray, minimised, behind the mini amp).
+  const vis = v => () => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('win-visible', v); };
+  mainWin.on('hide', vis(false)); mainWin.on('minimize', vis(false));
+  mainWin.on('show', vis(true)); mainWin.on('restore', vis(true));
+  mainWin.webContents.on('did-finish-load', () => { if (!mainWin.isVisible() || mainWin.isMinimized()) vis(false)(); });
 
   // window.open('', 'amp') from the renderer becomes the frameless, always-on-top mini amp.
   mainWin.webContents.setWindowOpenHandler(({ url, frameName }) => {
@@ -268,7 +287,7 @@ function snapAmp(win, corner, again = true) {
 }
 ipcMain.on('amp-window', (_e, o = {}) => {
   if (typeof o.snap === 'boolean') ampOpts.snap = o.snap;
-  if (o.corner && ampWin && !ampWin.isDestroyed()) snapAmp(ampWin, o.corner);
+  if ((o.corner || o.clamp) && ampWin && !ampWin.isDestroyed()) setTimeout(() => ampWin && !ampWin.isDestroyed() && snapAmp(ampWin, o.corner || null), 30);
   if (typeof o.opacity === 'number') ampOpts.opacity = Math.max(0.3, Math.min(1, o.opacity));
   if (typeof o.onTop === 'boolean') ampOpts.onTop = o.onTop;
   if (ampWin && !ampWin.isDestroyed()) { ampWin.setOpacity(ampOpts.opacity); ampWin.setAlwaysOnTop(ampOpts.onTop, 'floating'); }
@@ -280,7 +299,8 @@ const engine = new Engine(st => mainWin?.webContents.send('engine', st));
 ipcMain.handle('engine-status', () => engine.status());
 ipcMain.handle('engine-logs', () => engine.logs.slice(-120));
 ipcMain.on('engine-start', (_e, opts) => { engine.configure(typeof opts === 'number' ? { volume: opts } : opts || {}); engine.start(); });
-ipcMain.on('engine-config', (_e, opts) => { if (engine.configure(opts || {})) engine.restart(); });
+// Only restart for new settings if the engine is actually in use (not in web-player / Spotify-app mode).
+ipcMain.on('engine-config', (_e, opts) => { if (engine.configure(opts || {}) && engine.wanted) engine.restart(); });
 ipcMain.on('engine-restart', (_e, opts) => engine.restart(opts || {}));
 ipcMain.on('engine-stop', () => engine.stop());
 ipcMain.on('eq-set', (_e, eq) => engine.setEq(eq));
@@ -295,7 +315,7 @@ function findSpotifyExe() {
     : process.platform === 'darwin' ? ['/Applications/Spotify.app/Contents/MacOS/Spotify'] : ['/usr/bin/spotify', '/snap/bin/spotify'];
   return c.find(p => { try { fs.accessSync(p); return true; } catch { return false; } });
 }
-let launchedSpotify = false;
+let launchedSpotify = false; // true only if Amplite itself started Spotify hidden
 // Hides Spotify's window completely (no taskbar button) using Win32 ShowWindow(SW_HIDE).
 // Spotify keeps running and playing; Amplite stays the only thing you see.
 function hideSpotifyWindow() {
@@ -316,7 +336,7 @@ ipcMain.handle('spotify-app', async (_e, action, opts = {}) => {
       const { spawn } = require('child_process');
       spawn(exe, ['--minimized'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     } else await shell.openExternal('spotify:');
-    launchedSpotify = true;
+    launchedSpotify = opts.hide !== false;
     // Spotify creates its window a few seconds after launch; hide it as soon as it appears.
     if (opts.hide !== false) [1500, 3000, 5000, 8000, 12000, 18000].forEach(ms => setTimeout(hideSpotifyWindow, ms));
     return { ok: true, how: exe ? 'exe' : 'protocol' };
@@ -354,6 +374,7 @@ ipcMain.on('update-check', () => {
 ipcMain.on('update-install', () => { if (autoUpdater) setImmediate(() => autoUpdater.quitAndInstall(false, true)); });
 
 app.whenReady().then(async () => {
+  if (!gotLock) return;
   Menu.setApplicationMenu(null);
   try {
     await components.whenReady();

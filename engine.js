@@ -73,7 +73,11 @@ class Engine {
     this.logs.push(msg); if (this.logs.length > 300) this.logs.splice(0, this.logs.length - 300);
   }
 
+  // `wanted` is the single source of truth for "should the engine be running".
+  // start() turns it on; stop() turns it off and cancels any pending auto-restart.
   start() {
+    this.wanted = true; this.quitting = false;
+    clearTimeout(this.restartTimer);
     if (this.proc) return;
     const bin = this.bin;
     if (!bin) return this.set('missing', 'Engine not bundled with this build');
@@ -126,7 +130,7 @@ class Engine {
       this.log(`--- exit code ${code}`);
       if (this.proc !== p) return; // an old engine finishing after a restart: ignore it
       this.proc = null;
-      if (this.quitting) return;
+      if (this.quitting || !this.wanted) return;
       // Bad cached login: clear it so the next start asks again.
       if (code && this.state === 'error' && /credentials/i.test(this.detail)) {
         try { fs.rmSync(path.join(this.cacheDir, 'credentials.json'), { force: true }); } catch {}
@@ -134,7 +138,7 @@ class Engine {
       if (this.restarts < 5) {
         const wait = 1000 * 2 ** this.restarts++;
         this.set('starting', 'Restarting engine…');
-        setTimeout(() => this.start(), wait);
+        this.restartTimer = setTimeout(() => { if (this.wanted && !this.proc) this.start(); }, wait);
       } else this.set('error', `Engine stopped (code ${code}). Use Restart in Settings → Audio.`);
     });
   }
@@ -149,7 +153,8 @@ class Engine {
   }
 
   stop() {
-    this.quitting = true;
+    this.quitting = true; this.wanted = false;
+    clearTimeout(this.restartTimer);
     const p = this.proc; this.proc = null;
     if (!p) return Promise.resolve();
     return new Promise(res => {
@@ -163,7 +168,7 @@ class Engine {
     if (this.restarting) return; this.restarting = true;
     await this.stop();
     if (forget) { this.user = null; try { fs.rmSync(path.join(this.cacheDir, 'credentials.json'), { force: true }); } catch {} }
-    this.quitting = false; this.restarts = 0; this.restarting = false;
+    this.restarts = 0; this.restarting = false;
     this.start();
   }
 }

@@ -40,6 +40,17 @@ jobs:
           export CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_STRIP=symbols
           cargo build --release --locked --no-default-features --features "native-tls,rodio-backend"
           mkdir -p ../bin && cp target/release/librespot.exe ../bin/
+      - name: Brand engine (name + icon in the Windows volume mixer)
+        shell: bash
+        run: |
+          curl -sSfL -o rcedit.exe https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe
+          V=$(node -p "require('./package.json').version")
+          ./rcedit.exe bin/librespot.exe --set-icon build/icon.ico \
+            --set-version-string FileDescription "Amplite" \
+            --set-version-string ProductName "Amplite" \
+            --set-version-string CompanyName "Amplite" \
+            --set-version-string OriginalFilename "librespot.exe" \
+            --set-file-version "$V" --set-product-version "$V"
       - name: Check engine
         shell: bash
         run: ls -la bin && ./bin/librespot.exe --version
