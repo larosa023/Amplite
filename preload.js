@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('amplite', {
   installUpdate: () => ipcRenderer.send('update-install'),
   onUpdate: cb => ipcRenderer.on('update', (_e, s) => cb(s)),
   engineStatus: () => ipcRenderer.invoke('engine-status'),
+  engineLogs: () => ipcRenderer.invoke('engine-logs'),
   engineStart: opts => ipcRenderer.send('engine-start', opts),
   engineConfig: opts => ipcRenderer.send('engine-config', opts),
   ampWindow: opts => ipcRenderer.send('amp-window', opts),

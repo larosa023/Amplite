@@ -153,6 +153,7 @@ ipcMain.on('amp-window', (_e, o = {}) => {
 const { Engine } = require('./engine');
 const engine = new Engine(st => mainWin?.webContents.send('engine', st));
 ipcMain.handle('engine-status', () => engine.status());
+ipcMain.handle('engine-logs', () => engine.logs.slice(-120));
 ipcMain.on('engine-start', (_e, opts) => { engine.configure(typeof opts === 'number' ? { volume: opts } : opts || {}); engine.start(); });
 ipcMain.on('engine-config', (_e, opts) => { if (engine.configure(opts || {})) engine.restart(); });
 ipcMain.on('engine-restart', (_e, opts) => engine.restart(opts || {}));

@@ -4,9 +4,13 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { app } = require('electron');
 
-const DEVICE_NAME = 'Amplite';
+// One name per computer, so two PCs on the same Spotify account never get mixed up.
+const host = (os.hostname() || 'PC').replace(/\.local$/i, '').slice(0, 24);
+const DEVICE_NAME = `Amplite (${host})`;
+const redact = l => l.replace(/(code|state|code_challenge|access_token|token)=[^&\s]+/gi, '$1=…');
 
 class Engine {
   constructor(send) {
@@ -19,6 +23,8 @@ class Engine {
     this.volume = 60;
     this.bitrate = 320;      // 96 | 160 | 320 kbps
     this.normalise = false;
+    this.user = null;          // Spotify username the engine signed in as
+    this.logs = [];            // last 300 log lines, for diagnostics
   }
 
   configure({ volume, bitrate, normalise } = {}) {
@@ -46,7 +52,9 @@ class Engine {
     this.send(this.status());
   }
 
-  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin }; }
+  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin, user: this.user, running: !!this.proc }; }
+
+  log(line) { this.logs.push(redact(line).slice(0, 400)); if (this.logs.length > 300) this.logs.splice(0, this.logs.length - 300); }
 
   start() {
     if (this.proc) return;
@@ -72,11 +80,14 @@ class Engine {
     this.set('starting', this.hasLogin ? 'Connecting…' : 'Waiting for one-time approval');
     const p = spawn(bin, args, { windowsHide: true, env: { ...process.env, RUST_LOG: 'info' } });
     this.proc = p;
+    this.log(`--- start ${new Date().toISOString()} · ${path.basename(bin)} ${args.filter(a => !a.includes(path.sep)).join(' ')}`);
     const onLine = line => {
-      if (!line.trim()) return;
+      if (!line.trim() || this.proc !== p) return; // ignore output from an engine we've already replaced
+      this.log(line);
+      const who = line.match(/Authenticated as '([^']+)'/i);
       if (/Browse to:/i.test(line)) this.set('auth', 'Approve Amplite in your browser (one time only)');
-      else if (/Authenticated as/i.test(line)) { this.restarts = 0; this.set('ready', `Ready · ${this.bitrate} kbps`); }
-      else if (/Premium/i.test(line) && /required|not/i.test(line)) this.set('error', 'Spotify Premium is required for playback');
+      else if (who) { this.user = who[1]; this.restarts = 0; this.set('ready', `Ready · ${this.bitrate} kbps`); }
+      else if (/PremiumAccountRequired|premium account required|requires? (a )?premium/i.test(line)) this.set('error', 'This Spotify account isn’t Premium. Spotify only allows playback in apps like Amplite on Premium accounts.');
       else if (/Failed to get Spotify access token|Bad credentials|Login failed/i.test(line)) this.set('error', line.replace(/^.*?\]\s*/, '').slice(0, 160));
       if (process.env.AMPLITE_ENGINE_DEBUG) console.log('[engine]', line);
     };
@@ -84,8 +95,10 @@ class Engine {
     const feed = d => { buf += d.toString(); const lines = buf.split(/\r?\n/); buf = lines.pop(); lines.forEach(onLine); };
     p.stdout.on('data', feed);
     p.stderr.on('data', feed);
-    p.on('error', e => { this.proc = null; this.set('error', e.message); });
+    p.on('error', e => { if (this.proc !== p) return; this.proc = null; this.log('spawn error: ' + e.message); this.set('error', e.message); });
     p.on('exit', code => {
+      this.log(`--- exit code ${code}`);
+      if (this.proc !== p) return; // an old engine finishing after a restart: ignore it
       this.proc = null;
       if (this.quitting) return;
       // Bad cached login: clear it so the next start asks again.
@@ -96,21 +109,28 @@ class Engine {
         const wait = 1000 * 2 ** this.restarts++;
         this.set('starting', 'Restarting engine…');
         setTimeout(() => this.start(), wait);
-      } else this.set('error', `Engine stopped (code ${code}). Use “Restart engine” in the menu.`);
+      } else this.set('error', `Engine stopped (code ${code}). Use Restart in Settings → Audio.`);
     });
   }
 
+  // Resolves once the process has really exited (Windows can take a moment).
   stop() {
     this.quitting = true;
-    if (this.proc) { try { this.proc.kill(); } catch {} }
-    this.proc = null;
+    const p = this.proc; this.proc = null;
+    if (!p) return Promise.resolve();
+    return new Promise(res => {
+      const t = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} res(); }, 3000);
+      p.once('exit', () => { clearTimeout(t); res(); });
+      try { p.kill(); } catch { clearTimeout(t); res(); }
+    });
   }
 
-  restart({ forget = false } = {}) {
-    this.stop();
-    if (forget) { try { fs.rmSync(path.join(this.cacheDir, 'credentials.json'), { force: true }); } catch {} }
-    this.quitting = false; this.restarts = 0;
-    setTimeout(() => this.start(), 600);
+  async restart({ forget = false } = {}) {
+    if (this.restarting) return; this.restarting = true;
+    await this.stop();
+    if (forget) { this.user = null; try { fs.rmSync(path.join(this.cacheDir, 'credentials.json'), { force: true }); } catch {} }
+    this.quitting = false; this.restarts = 0; this.restarting = false;
+    this.start();
   }
 }
 

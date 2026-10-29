@@ -316,8 +316,19 @@ async function engineReady(timeout = 12000) {
   }
   return S.engine?.state === 'ready';
 }
+// Spots the two account problems that break playback for new users.
+function accountProblem() {
+  if (S.me?.product && S.me.product !== 'premium')
+    return { kind: 'free', msg: `Your Spotify account (${S.me.display_name || S.me.id}) is on the ${S.me.product} plan. Spotify only allows playback in apps like Amplite on Premium.` };
+  const eu = S.engine?.user, me = S.me?.id;
+  if (eu && me && eu.toLowerCase() !== me.toLowerCase())
+    return { kind: 'mismatch', msg: `The audio engine is signed in as “${eu}”, but Amplite is logged in as “${S.me.display_name || me}”. Click Re-link and approve with your own Spotify account.` };
+  return null;
+}
 async function target() {
   if (useEngine()) {
+    const prob = accountProblem();
+    if (prob) { toast(prob.kind === 'free' ? 'Playback needs Spotify Premium — see Settings → Audio.' : 'The audio engine is signed into a different Spotify account — see Settings → Audio.'); openSettings('audio'); return undefined; }
     if (!(await engineReady())) return undefined;
     return S.engineId || (await findEngine(6)) || undefined;
   }
@@ -330,8 +341,27 @@ function renderEngine() {
   const label = !e ? 'Checking…' : e.state === 'missing' ? 'Not included in this build — using Spotify’s web player'
     : e.state === 'ready' ? `Ready · streaming at ${e.bitrate} kbps` : e.state === 'auth' ? 'Waiting for one-time approval in your browser'
     : e.state === 'error' ? 'Error: ' + (e.detail || 'unknown') : /restart/i.test(e.detail || '') ? 'Restarting…' : 'Starting…';
-  el.className = 'engine-line ' + (e?.state || '');
-  el.innerHTML = `<span class="dot"></span><span>${esc(label)}</span>`;
+  const prob = accountProblem();
+  el.className = 'engine-line ' + (prob ? 'error' : e?.state || '');
+  el.innerHTML = `<span class="dot"></span><span>${esc(prob ? prob.msg : label)}${e?.user && !prob ? `<small class="muted"> · signed in as ${esc(e.user)}</small>` : ''}${e?.name ? `<small class="muted"> · device “${esc(e.name)}”</small>` : ''}</span>`;
+}
+
+async function copyDiagnostics() {
+  const lines = [];
+  const add = (k, v) => lines.push(`${k}: ${v}`);
+  try { const i = await window.amplite?.info(); add('Amplite', i ? 'v' + i.version : 'web'); } catch {}
+  add('Platform', navigator.userAgentData?.platform || navigator.platform);
+  add('Account', `${S.me?.id} · ${S.me?.product || '?'} · ${S.me?.country || '?'}`);
+  add('Engine', JSON.stringify(S.engine || null));
+  add('Engine device id', S.engineId || '(not found)');
+  add('Problem', accountProblem()?.msg || 'none detected');
+  try { const d = await api('/me/player/devices'); add('Devices', (d?.devices || []).map(x => `${x.name} [${x.type}${x.is_active ? ', active' : ''}${x.is_restricted ? ', restricted' : ''}]`).join(' | ') || 'none'); } catch (e) { add('Devices', 'error ' + e.message); }
+  try { const p = await api('/me/player'); add('Now', p?.item ? `${p.item.name} on ${p.device?.name} (${p.is_playing ? 'playing' : 'paused'})` : 'nothing'); } catch (e) { add('Now', 'error ' + e.message); }
+  add('Settings', JSON.stringify(CFG.audio));
+  if (IS_APP) { try { lines.push('--- engine log ---', ...(await window.amplite.engineLogs())); } catch {} }
+  const text = lines.join('\n');
+  try { await navigator.clipboard.writeText(text); toast('Diagnostics copied — paste them to whoever is helping you.'); }
+  catch { console.log(text); toast('Couldn’t copy automatically.'); }
 }
 const audioOpts = () => ({ volume: Math.round(S.volume * 100), bitrate: CFG.audio.bitrate, normalise: CFG.audio.normalise });
 let audioT;
@@ -347,6 +377,11 @@ function initEngine() {
     if (st.state === 'ready' && was !== 'ready') { S.engineId = null; findEngine(8).then(() => poll()); }
     if (st.state === 'auth' && was !== 'auth') toast('One-time step: approve Amplite in the browser window that just opened.');
     if (st.state === 'error' && was !== 'error') toast('Audio engine problem — see Settings → Audio.');
+    if (st.user && st.user !== S.lastEngineUser) {
+      S.lastEngineUser = st.user;
+      const prob = accountProblem();
+      if (prob?.kind === 'mismatch') { toast('The audio engine is signed into a different Spotify account.'); openSettings('audio'); }
+    }
     if (st.state === 'missing') initSDK();
     renderEngine(); updatePlayerUI();
   });
@@ -1101,7 +1136,8 @@ function settingsHTML() {
         seg('audio.bitrate', 'Streaming quality', [[320, 'Very high · 320'], [160, 'High · 160'], [96, 'Normal · 96']], 'kbps Ogg Vorbis. Very high needs Premium', true)
         + sw('audio.normalise', 'Normalize volume', 'Keeps loudness consistent between songs'))
       + grp('Troubleshooting', `<div class="set-row"><div class="lbl">Restart audio engine<small>Try this if playback stops responding</small></div><button class="btn ctl" id="engRestart">Restart</button></div>
-        <div class="set-row"><div class="lbl">Re-link audio engine<small>Signs the engine in again through your browser</small></div><button class="btn ctl" id="engRelink">Re-link</button></div>`),
+        <div class="set-row"><div class="lbl">Re-link audio engine<small>Signs the engine in again through your browser. Make sure the browser is logged into your own Spotify account.</small></div><button class="btn ctl" id="engRelink">Re-link</button></div>
+        <div class="set-row"><div class="lbl">Copy diagnostics<small>Version, account type, devices and recent engine log (no passwords or tokens)</small></div><button class="btn ctl" id="engDiag">Copy</button></div>`),
     about: `<div class="about-logo"><span class="logo" data-logo></span><div><b>Amplite</b><span class="muted" id="aboutVer"></span></div></div>`
       + (IS_APP ? grp('Updates', `<div class="set-row"><div class="lbl">Check for updates<small>Amplite also checks automatically</small></div><button class="btn ctl" id="aboutUpd">Check now</button></div>`) : '')
       + grp('Keyboard shortcuts', [['Space', 'Play / pause'], ['Ctrl + ← / →', 'Previous / next'], ['M', 'Mini amp'], ['/', 'Search'], ['Ctrl + B', 'Collapse sidebar'], ['Ctrl + ,', 'Settings'], ['Esc', 'Close settings']]
@@ -1185,7 +1221,8 @@ function bindSettings(root) {
     if (e.target.closest('#ampReset')) { CFG.amp = clone(AMP_DEFAULTS); store.set('cfg', CFG); applyAmp(); syncControls(); toast('Mini amp reset'); return; }
     if (e.target.closest('#engRestart')) { window.amplite.engineRestart(); toast('Restarting audio engine…'); return; }
     if (e.target.closest('#engRelink')) { window.amplite.engineRestart({ forget: true }); toast('Re-linking — approve Amplite in your browser.'); return; }
-    if (e.target.closest('#aboutUpd')) { $('#updBtn').click(); }
+    if (e.target.closest('#aboutUpd')) { $('#updBtn').click(); return; }
+    if (e.target.closest('#engDiag')) { copyDiagnostics(); }
   });
   root.addEventListener('change', e => {
     const el = e.target;
@@ -1278,6 +1315,7 @@ async function boot() {
   $('#userBtn').innerHTML = (img(S.me.images, 32) ? `<img src="${esc(img(S.me.images, 32))}" alt="">` : `<span class="av">${esc(name[0]?.toUpperCase() || '?')}</span>`) + `<span>${esc(name)}</span>`;
 
   updatePlayerUI();
+  if (S.me.product && S.me.product !== 'premium') toast('Heads up: Spotify only allows playback in Amplite on Premium accounts. You can still browse.');
   await loadPlaylists();
   navigate('home');
   if (IS_APP) initEngine(); else initSDK();
