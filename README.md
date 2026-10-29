@@ -8,7 +8,7 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Auto-updates**: Amplite checks GitHub Releases, downloads new versions in the background, and shows a restart button in the title bar. You can also use **Check for updates** in the account menu.
 - **Media keys** (play/pause, next, previous) work even when Amplite isn't focused.
 - Home (recently played and your top tracks), search, Liked Songs, playlists, albums and artists.
-- Plays music itself, or acts as a remote for the Spotify app on your PC or phone.
+- Plays music itself at **320 kbps** through a built-in audio engine, or acts as a remote for Spotify on your other devices.
 - Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search.
 
 ## Install
@@ -22,15 +22,16 @@ In your app on the [Spotify developer dashboard](https://developer.spotify.com/d
 1. **Settings → Redirect URIs**: add `http://127.0.0.1:43821/callback` (exactly). Tick **Web API** and **Web Playback SDK**, then save.
 2. **User Management**: add the email of the Spotify account you'll log in with.
 
-## Playing music inside Amplite
+## Playback and audio quality
 
-Spotify's music is DRM-protected. Amplite runs on castLabs' build of Electron, which includes the Widevine DRM component. Spotify only plays in apps that are *VMP-signed*, which is a free signature from castLabs:
+Amplite plays through a bundled copy of [librespot](https://github.com/librespot-org/librespot), an open-source Spotify Connect engine, at **320 kbps** (Spotify's "Very high" quality) with 32-bit float output.
 
-1. Create a free castLabs EVS account: `pip install castlabs-evs`, then `python -m castlabs_evs.account signup`.
-2. In this GitHub repo, go to **Settings → Secrets and variables → Actions** and add `EVS_ACCOUNT_NAME` and `EVS_PASSWD`.
-3. Re-run the build. The installer will then be signed.
+- **First time only:** when Amplite starts after you log in, your browser opens once to approve the Amplite audio engine. After that the login is cached.
+- The chip next to the volume slider shows the engine's status: **320 kbps** means it's playing through the engine.
+- If something goes wrong, use **Restart audio engine** or **Re-link audio engine** in the account menu.
+- Amplite can still control your other Spotify devices (phone, desktop app). Click **Play here** to move playback into Amplite.
 
-Until then, Amplite still works as a **remote**: open the official Spotify app (it can stay minimized), and Amplite will show and control what's playing, including from the mini amp.
+librespot is unofficial and Spotify Premium is required. If the engine is missing from a build, Amplite falls back to Spotify's Web Playback SDK.
 
 ## Build it yourself
 
@@ -54,7 +55,8 @@ Every push to `main` builds the installer on GitHub Actions and publishes it as 
 
 | Path | What it is |
 |---|---|
-| `main.js` | Desktop shell: window, local login server, mini amp window, media keys |
+| `main.js` | Desktop shell: window, local login server, mini amp window, media keys, updater |
+| `engine.js` | Runs the bundled librespot audio engine (320 kbps) |
 | `preload.js` | Safe bridge between the shell and the UI |
 | `src/` | The UI: `index.html`, `styles.css`, `app.js` |
 | `build/` | Icons and the optional VMP signing hook |

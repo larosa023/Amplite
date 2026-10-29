@@ -192,7 +192,9 @@ const S = {
   cur: null, back: [], fwd: [], lists: [], hero: null,
   seeking: false, ampSeeking: false, ampRemain: false, ampMode: null, ampWin: null,
   vizGrad: null, vizPeak: null,
+  engine: null, engineId: null, // bundled 320 kbps librespot engine (desktop app)
 };
+const useEngine = () => IS_APP && S.engine && S.engine.state !== 'missing';
 const pos = () => {
   const n = S.now; if (!n) return 0;
   return n.paused ? n.position : Math.min(n.duration, n.position + (performance.now() - n.ts));
@@ -200,6 +202,7 @@ const pos = () => {
 
 /* ---------------- Web Playback SDK ---------------- */
 function initSDK() {
+  if (S.sdkStarted) return; S.sdkStarted = true;
   window.onSpotifyWebPlaybackSDKReady = () => {
     const p = new Spotify.Player({ name: 'Amplite', getOAuthToken: cb => getToken().then(cb), volume: S.volume });
     S.player = p;
@@ -254,20 +257,93 @@ async function poll() {
 }
 const pollSoon = (ms = 700) => setTimeout(poll, ms);
 
+/* ---------------- audio engine (desktop app) ---------------- */
+async function findEngine(tries = 1) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const d = await api('/me/player/devices');
+      const dev = (d?.devices || []).find(x => x.name === (S.engine?.name || 'Amplite') && x.id !== S.deviceId);
+      if (dev) { S.engineId = dev.id; return dev.id; }
+    } catch {}
+    if (i < tries - 1) await sleep(1000);
+  }
+  return null;
+}
+async function engineReady(timeout = 12000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    if (S.engine?.state === 'ready') return true;
+    if (S.engine?.state === 'auth') { toast('Approve Amplite in your browser first (one-time), then press play again.'); return false; }
+    if (S.engine?.state === 'error') { toast('Audio engine: ' + (S.engine.detail || 'error')); return false; }
+    await sleep(300);
+  }
+  return S.engine?.state === 'ready';
+}
+async function target() {
+  if (useEngine()) {
+    if (!(await engineReady())) return undefined;
+    return S.engineId || (await findEngine(6)) || undefined;
+  }
+  return S.deviceId || undefined;
+}
+function renderEngine() {
+  const e = S.engine, chip = $('#engineChip');
+  if (!chip) return;
+  if (!e || e.state === 'missing') { chip.classList.add('hidden'); return; }
+  chip.classList.remove('hidden');
+  chip.className = 'engine-chip ' + e.state;
+  const onEngine = S.now?.device === e.name && S.now?.source === 'remote';
+  chip.textContent = e.state === 'ready' ? (onEngine ? `${e.bitrate} kbps` : `${e.bitrate} kbps · ready`)
+    : e.state === 'auth' ? 'Approve in browser' : e.state === 'error' ? 'Engine error' : 'Engine starting…';
+  chip.title = e.detail || '';
+}
+function initEngine() {
+  window.amplite.onEngine(st => {
+    const was = S.engine?.state;
+    S.engine = st;
+    if (st.state === 'ready' && was !== 'ready') { S.engineId = null; findEngine(8).then(() => { renderEngine(); poll(); }); }
+    if (st.state === 'auth' && was !== 'auth') toast('One-time step: approve Amplite in the browser window that just opened.');
+    if (st.state === 'missing') initSDK();
+    renderEngine(); updatePlayerUI();
+  });
+  window.amplite.engineStatus().then(st => {
+    S.engine = st;
+    if (st.state === 'missing') { initSDK(); return; }
+    renderEngine();
+    window.amplite.engineStart(Math.round(S.volume * 100));
+  });
+  $('#engRestartBtn').onclick = () => { window.amplite.engineRestart(); toast('Restarting audio engine…'); };
+  $('#engForgetBtn').onclick = () => { window.amplite.engineRestart({ forget: true }); toast('Re-linking — approve Amplite in your browser.'); };
+  $('#engineChip').onclick = () => {
+    if (S.engine?.state === 'error') window.amplite.engineRestart();
+    else if (S.engine?.state === 'ready' && S.now && S.now.device !== S.engine.name) playHere();
+  };
+}
+
 /* ---------------- playback controls ---------------- */
 const isLocal = () => S.player && S.now?.source === 'sdk';
 const fail = e => {
-  if (e.status === 404) toast('No active device. Open Spotify somewhere, or use Chrome/Edge with Premium.');
+  if (e.status === 404) toast(useEngine() ? 'Audio engine isn’t connected yet — give it a second and try again.' : 'No active device. Open Spotify somewhere, or use Chrome/Edge with Premium.');
   else if (e.status === 403) toast('Spotify refused that (Premium is required for playback control).');
   else toast(e.message);
 };
 
 async function startPlayback(body) {
   activate();
+  const dev = await target();
+  if (useEngine() && !dev) return;
   try {
-    await api('/me/player/play', { method: 'PUT', query: S.deviceId ? { device_id: S.deviceId } : undefined, body });
-    pollSoon(900);
-  } catch (e) { fail(e); }
+    await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body });
+    pollSoon(600); pollSoon(1800);
+  } catch (e) {
+    if (e.status === 404 && useEngine()) {
+      // Engine restarted and got a new device id: look it up again and retry once.
+      S.engineId = null;
+      const id = await findEngine(4);
+      if (id) { try { await api('/me/player/play', { method: 'PUT', query: { device_id: id }, body }); pollSoon(800); return; } catch (e2) { return fail(e2); } }
+    }
+    fail(e);
+  }
 }
 const playContext = (context_uri, offsetUri) => startPlayback(offsetUri ? { context_uri, offset: { uri: offsetUri } } : { context_uri });
 function playUris(uris, idx = 0) {
@@ -319,14 +395,15 @@ function setVolume(v) {
   try { S.player?.setVolume(v)?.catch?.(() => {}); } catch {}
   if (S.now?.source === 'remote') {
     clearTimeout(volT);
-    volT = setTimeout(() => api('/me/player/volume', { method: 'PUT', query: { volume_percent: Math.round(v * 100) } }).catch(() => {}), 250);
+    volT = setTimeout(() => api('/me/player/volume', { method: 'PUT', query: { volume_percent: Math.round(v * 100) } }).catch(() => {}), 200);
   }
   syncVolume();
 }
 async function playHere() {
-  if (!S.deviceId) return;
   activate();
-  try { await api('/me/player', { method: 'PUT', body: { device_ids: [S.deviceId], play: !S.now?.paused } }); pollSoon(1200); } catch (e) { fail(e); }
+  const dev = await target();
+  if (!dev) return;
+  try { await api('/me/player', { method: 'PUT', body: { device_ids: [dev], play: !S.now?.paused } }); pollSoon(1000); } catch (e) { fail(e); }
 }
 
 /* ---------------- liked songs ---------------- */
@@ -378,11 +455,15 @@ function updatePlayerUI() {
   A.dev.textContent = n?.device || 'stereo';
 
   const dev = $('#deviceBtn');
-  if (n?.source === 'remote') {
+  const onEngine = useEngine() && n?.device === S.engine?.name;
+  const canHere = useEngine() ? S.engine?.state === 'ready' : !!S.deviceId;
+  if (n?.source === 'remote' && !onEngine) {
     dev.classList.remove('hidden');
-    dev.textContent = `On ${n.device}${S.deviceId ? ' · Play here' : ''}`;
-    dev.disabled = !S.deviceId;
+    dev.textContent = `On ${n.device}${canHere ? ' · Play here' : ''}`;
+    dev.disabled = !canHere;
   } else dev.classList.add('hidden');
+  const kb = $('#ampKbps', ampEl); if (kb) kb.textContent = onEngine ? String(S.engine.bitrate) : (n?.source === 'sdk' ? '256' : '---');
+  renderEngine();
 
   if ((n?.uri || null) !== S.likedUri) checkLiked(n?.uri || null);
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
@@ -909,9 +990,9 @@ async function boot() {
   updatePlayerUI();
   await loadPlaylists();
   navigate('home');
-  initSDK();
+  if (IS_APP) initEngine(); else initSDK();
   poll();
-  setInterval(poll, 5000);
+  setInterval(poll, 3000);
   setInterval(tickBar, 250);
   startViz();
 }

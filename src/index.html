@@ -59,6 +59,8 @@
           <button id="userBtn" class="user-chip"></button>
           <div id="userMenu" class="popover user-menu hidden">
             <button id="updMenuBtn" class="menu-item app-only" data-i="refresh"><span>Check for updates</span></button>
+            <button id="engRestartBtn" class="menu-item app-only" data-i="amp"><span>Restart audio engine</span></button>
+            <button id="engForgetBtn" class="menu-item app-only" data-i="logout"><span>Re-link audio engine</span></button>
             <button id="logoutBtn" class="menu-item" data-i="logout"><span>Log out</span></button>
             <div id="verLine" class="ver-line app-only"></div>
           </div>
@@ -92,6 +94,7 @@
       </div>
       <div class="extra">
         <button id="deviceBtn" class="device-chip hidden"></button>
+        <button id="engineChip" class="engine-chip hidden"></button>
         <button id="muteBtn" class="icon-btn" title="Mute"></button>
         <input id="vol" class="range vol" type="range" min="0" max="100" aria-label="Volume">
         <button id="ampBtn" class="amp-btn" data-i="amp" title="Mini Amp (M)"><span>AMP</span></button>
@@ -121,7 +124,7 @@
           </div>
           <div class="amp-right">
             <div class="amp-marquee"><span id="ampMarq"></span></div>
-            <div class="amp-meta"><span>256</span> kbps <span>44</span> kHz <em id="ampDev">stereo</em></div>
+            <div class="amp-meta"><span id="ampKbps">---</span> kbps <span>44</span> kHz <em id="ampDev">stereo</em></div>
             <input id="ampVol" class="amp-range amp-vol" type="range" min="0" max="100" aria-label="Volume">
           </div>
         </div>

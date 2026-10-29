@@ -1,4 +1,5 @@
-// Amplite — desktop shell (Electron, castLabs build with Widevine for Spotify playback)
+// Amplite — desktop shell (Electron). Audio comes from the bundled librespot engine (engine.js);
+// the castLabs build keeps Widevine available as a fallback player.
 const { app, BrowserWindow, components, ipcMain, globalShortcut, shell, Menu } = require('electron');
 const http = require('http');
 const fs = require('fs');
@@ -136,6 +137,13 @@ ipcMain.on('main-visibility', (_e, show) => {
 });
 ipcMain.on('quit', () => app.quit());
 
+/* ---------------- audio engine (librespot, 320 kbps) ---------------- */
+const { Engine } = require('./engine');
+const engine = new Engine(st => mainWin?.webContents.send('engine', st));
+ipcMain.handle('engine-status', () => engine.status());
+ipcMain.on('engine-start', (_e, vol) => { if (Number.isFinite(vol)) engine.volume = Math.round(vol); engine.start(); });
+ipcMain.on('engine-restart', (_e, opts) => engine.restart(opts || {}));
+
 /* ---------------- auto-update (GitHub Releases) ---------------- */
 let autoUpdater = null;
 const sendUpdate = (state, extra = {}) => mainWin?.webContents.send('update', { state, ...extra });
@@ -184,5 +192,5 @@ app.whenReady().then(async () => {
   globalShortcut.register('MediaStop', () => send('stop'));
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => { globalShortcut.unregisterAll(); engine.stop(); });
 app.on('window-all-closed', () => app.quit());

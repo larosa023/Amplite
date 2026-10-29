@@ -23,6 +23,21 @@ jobs:
       - name: Install castLabs EVS (only when secrets are set)
         if: env.EVS_ACCOUNT_NAME != ''
         run: pip install --upgrade castlabs-evs
+      - name: Cache audio engine (librespot)
+        id: lrs
+        uses: actions/cache@v4
+        with:
+          path: bin/librespot.exe
+          key: librespot-0.8.0-win-x64-nativetls-rodio-v1
+      - name: Build audio engine (librespot 0.8.0)
+        if: steps.lrs.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          cargo install librespot --version 0.8.0 --locked --no-default-features --features "native-tls,rodio-backend" --root lrs
+          mkdir -p bin && cp lrs/bin/librespot.exe bin/
+      - name: Check engine
+        shell: bash
+        run: ls -la bin && ./bin/librespot.exe --version
       - run: npm ci
       - name: Build installer + portable zip
         run: npx electron-builder --win nsis zip --x64 --publish never
