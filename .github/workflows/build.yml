@@ -28,7 +28,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: bin/librespot.exe
-          key: librespot-0.8.0-win-x64-nativetls-rodio-${{ hashFiles('patches/**') }}
+          key: librespot-0.8.0-win-x64-nativetls-rodio-lto-${{ hashFiles('patches/**') }}
       - name: Build audio engine (librespot 0.8.0 + Amplite patches)
         if: steps.lrs.outputs.cache-hit != 'true'
         shell: bash
@@ -36,6 +36,8 @@ jobs:
           git clone --depth 1 --branch v0.8.0 https://github.com/librespot-org/librespot lrs-src
           cd lrs-src
           for p in ../patches/*.patch; do git apply "$p"; done
+          # Smaller, faster engine: full LTO, single codegen unit, symbols stripped.
+          export CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_STRIP=symbols
           cargo build --release --locked --no-default-features --features "native-tls,rodio-backend"
           mkdir -p ../bin && cp target/release/librespot.exe ../bin/
       - name: Check engine

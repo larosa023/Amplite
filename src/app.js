@@ -49,14 +49,16 @@ const AMP_DEFAULTS = {
   scale: 1.1, width: 'normal', corners: 'soft', font: 'mono', glow: true,
   viz: 'bars', bars: 19, fps: 30,
   art: false, title: true, marquee: true, meta: true, vol: true, seek: true, controls: true, toggles: true,
-  scroll: 'normal', time: 'elapsed', opacity: 100, onTop: true,
+  scroll: 'normal', time: 'elapsed', opacity: 100, onTop: true, snap: true, corner: 'none', eqOpen: false, lyricLine: false,
 };
-const DEFAULTS = { ui: { sideMin: false, lite: false }, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto', hideSpotify: true } };
+const EQ_DEFAULTS = { enabled: false, preamp: 0, auto: true, preset: 'flat', gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+const DEFAULTS = { ui: { sideMin: false, lite: false, accent: '', closeToTray: true, startup: 'off', hwAccel: true }, eq: EQ_DEFAULTS, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto', hideSpotify: true } };
 const clone = o => JSON.parse(JSON.stringify(o));
 const CFG = (() => {
   const saved = store.get('cfg', {}) || {}, c = clone(DEFAULTS);
   for (const k of Object.keys(c)) Object.assign(c[k], saved[k] || {});
   c.amp.colors = { ...AMP_DEFAULTS.colors, ...(saved.amp?.colors || {}) };
+  c.eq.gains = Array.isArray(saved.eq?.gains) && saved.eq.gains.length === 10 ? saved.eq.gains : [...EQ_DEFAULTS.gains];
   return c;
 })();
 const getK = k => k.split('.').reduce((o, p) => o?.[p], CFG);
@@ -64,7 +66,9 @@ function setK(k, v) {
   const parts = k.split('.'), last = parts.pop();
   parts.reduce((o, p) => o[p], CFG)[last] = v;
   store.set('cfg', CFG);
-  if (k.startsWith('amp.')) applyAmp();
+  if (k === 'amp.lyricLine') syncLyricsForTrack();
+  if (k.startsWith('eq.')) applyEq();
+  else if (k.startsWith('amp.')) applyAmp();
   else if (k.startsWith('ui.')) applyUI();
   else if (k.startsWith('audio.')) applyAudio();
   syncControls();
@@ -92,6 +96,10 @@ const ICONS = {
   sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 10l-2 2 2 2"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
   pin: '<path d="M12 17v5M9 3h6l-1 6 4 4H6l4-4z"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/>',
+  queue: '<path d="M3 6h13M3 12h13M3 18h9M17 15v6l5-3z"/>',
+  disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
 };
 const svg = n => {
   const v = ICONS[n];
@@ -160,20 +168,36 @@ async function getToken() {
 
 function logout() {
   store.del('token');
+  try { Object.keys(localStorage).filter(k => k.startsWith('amplite:swr:')).forEach(k => localStorage.removeItem(k)); } catch {}
   try { S.player?.disconnect(); } catch {}
   location.href = HOME_URI;
 }
 
 /* ---------------- Web API ---------------- */
 const apiCache = new Map(); // url -> { t, data }  (GET responses, 2 min)
-const cacheable = (method, url) => method === 'GET' && !/\/me\/player|\/contains/.test(url);
+const cacheable = (method, url) => method === 'GET' && !/\/me\/player(?!\/recently-played)|\/contains/.test(url);
+// Stale-while-revalidate across launches for the data the first screen needs, so Amplite opens instantly.
+const SWR = /\/v1\/me(\?|$)|\/v1\/me\/playlists|\/v1\/me\/player\/recently-played|\/v1\/me\/top\/tracks/;
+const swrGet = url => { const v = store.get('swr:' + url); return v && Date.now() - v.t < 7 * 864e5 ? v.data : null; };
+const swrListeners = [];
+function swrRefresh(url, path, opts) {
+  api(path, { ...opts, fresh: true }).then(data => {
+    const old = JSON.stringify(swrGet(url)), now = JSON.stringify(data);
+    store.set('swr:' + url, { t: Date.now(), data });
+    if (old !== now) swrListeners.forEach(f => f(url, data));
+  }).catch(() => {});
+}
 const purgeCache = re => { for (const k of apiCache.keys()) if (re.test(k)) apiCache.delete(k); };
-async function api(path, { method = 'GET', body, query } = {}, retry = true) {
+async function api(path, { method = 'GET', body, query, fresh = false } = {}, retry = true) {
   let url = path.startsWith('http') ? path : 'https://api.spotify.com/v1' + path;
   if (query) url += (url.includes('?') ? '&' : '?') + new URLSearchParams(query);
-  if (cacheable(method, url)) {
+  if (cacheable(method, url) && !fresh) {
     const hit = apiCache.get(url);
     if (hit && Date.now() - hit.t < 120000) return hit.data;
+    if (SWR.test(url)) {
+      const stale = swrGet(url);
+      if (stale) { apiCache.set(url, { t: Date.now(), data: stale }); swrRefresh(url, path, { method, body, query }); return stale; }
+    }
   }
   const token = await getToken();
   const r = await fetch(url, {
@@ -195,7 +219,10 @@ async function api(path, { method = 'GET', body, query } = {}, retry = true) {
     const e = new Error(data?.error?.message || `Spotify error ${r.status}`);
     e.status = r.status; e.reason = data?.error?.reason; throw e;
   }
-  if (cacheable(method, url)) apiCache.set(url, { t: Date.now(), data });
+  if (cacheable(method, url)) {
+    apiCache.set(url, { t: Date.now(), data });
+    if (SWR.test(url) && !fresh) store.set('swr:' + url, { t: Date.now(), data });
+  }
   return data;
 }
 
@@ -503,6 +530,7 @@ function initEngine() {
     S.engine = st;
     if (st.state === 'missing') { initSDK(); return; }
     if (playMode() === 'engine') window.amplite.engineStart(audioOpts());
+    applyEq();
     renderEngine();
   });
 }
@@ -654,8 +682,16 @@ function updatePlayerUI() {
   const kb = $('#ampKbps', ampEl); if (kb) kb.textContent = onEngine && useEngine() ? String(S.engine.streamKbps || S.engine.bitrate) : (n?.source === 'sdk' ? '256' : '---');
   const aa = A.art; if (aa && (n?.album?.image || '') !== aa.getAttribute('src')) aa.setAttribute('src', n?.album?.image || '');
 
-  if ((n?.uri || null) !== S.likedUri) checkLiked(n?.uri || null);
+  if ((n?.uri || null) !== S.likedUri) {
+    checkLiked(n?.uri || null);
+    syncLyricsForTrack();
+    if (D.tab === 'queue') setTimeout(renderQueue, 400);
+  }
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
+  if (IS_APP) {
+    const key = `${n?.uri}|${n?.paused}`;
+    if (key !== S.trayKey) { S.trayKey = key; window.amplite.nowPlaying({ title: n?.name, artist: n?.artists?.map(a => a.name).join(', '), paused: !n || n.paused }); }
+  }
   if ('mediaSession' in navigator && n && navigator.mediaSession.metadata?.title !== n.name) {
     try {
       navigator.mediaSession.metadata = new MediaMetadata({ title: n.name, artist: n.artists.map(a => a.name).join(', '), album: n.album?.name || '', artwork: n.album?.image ? [{ src: n.album.image, sizes: '300x300' }] : [] });
@@ -669,6 +705,7 @@ function markPlaying() {
   if (uri) $$(`.trow[data-uri="${CSS.escape(uri)}"]`).forEach(r => r.classList.add('playing'));
 }
 function tickBar() {
+  if (D.lines.length) tickLyrics();
   if (document.hidden) return;
   const n = S.now, d = n?.duration || 0, p = pos();
   if (!S.seeking) { $('#tCur').textContent = fmt(p); setRange($('#seek'), d ? p / d : 0); }
@@ -712,26 +749,81 @@ function card({ kind, id, uri, title, sub, image, round }) {
     <div class="card-title">${esc(title)}</div><div class="card-sub">${esc(sub || '')}</div></div>`;
 }
 
-function trackTable(tracks, { context = null, showAlbum = true, showArt = true } = {}) {
-  const li = S.lists.push({ tracks, context }) - 1;
-  return `<div class="tracks ${showAlbum ? '' : 'no-album'}" data-list="${li}">
-    <div class="thead"><span>#</span><span>Title</span>${showAlbum ? '<span>Album</span>' : ''}<span class="tdur">${svg('clock')}</span></div>
-    ${tracks.map((t, i) => `<div class="trow ${t.playable ? '' : 'dim'}" data-idx="${i}" data-uri="${esc(t.uri)}">
+function trackRows(tracks, { showAlbum, showArt }) {
+  return tracks.map((t, i) => `<div class="trow ${t.playable ? '' : 'dim'}" data-idx="${i}" data-uri="${esc(t.uri)}" data-q="${esc(`${t.name} ${t.artists.map(a => a.name).join(' ')} ${t.album?.name || ''}`.toLowerCase())}">
       <div class="tnum"><span>${i + 1}</span>${svg('play')}</div>
-      <div class="tmain">${showArt && t.album?.image ? `<img src="${esc(t.album.image)}" alt="" loading="lazy">` : ''}
+      <div class="tmain">${showArt && t.album?.image ? `<img src="${esc(t.album.image)}" alt="" loading="lazy" decoding="async">` : ''}
         <div class="ttext"><div class="tname">${esc(t.name)}</div><div class="tartist">${artistLinks(t.artists)}</div></div></div>
       ${showAlbum ? `<div class="talbum">${t.album?.id ? `<a data-open="album:${esc(t.album.id)}">${esc(t.album.name)}</a>` : esc(t.album?.name || '')}</div>` : ''}
-      <div class="tdur">${fmt(t.duration)}</div></div>`).join('')}
+      <div class="tdur">${fmt(t.duration)}</div></div>`).join('');
+}
+function trackTable(tracks, { context = null, showAlbum = true, showArt = true } = {}) {
+  const li = S.lists.push({ tracks, orig: tracks, context, showAlbum, showArt }) - 1;
+  return `<div class="tracks ${showAlbum ? '' : 'no-album'}" data-list="${li}">
+    <div class="thead"><span>#</span><span>Title</span>${showAlbum ? '<span>Album</span>' : ''}<span class="tdur">${svg('clock')}</span></div>
+    <div class="tbody">${trackRows(tracks, { showAlbum, showArt })}</div>
   </div>`;
 }
 
-function hero({ image, art, round, kind, title, desc, meta, pin }) {
+/* ---- filter / sort / shuffle for the page's main track list ---- */
+const SORTS = {
+  default: ['Custom order', null],
+  added: ['Recently added', (a, b) => (b.added || '').localeCompare(a.added || '')],
+  title: ['Title', (a, b) => a.name.localeCompare(b.name)],
+  artist: ['Artist', (a, b) => (a.artists[0]?.name || '').localeCompare(b.artists[0]?.name || '') || a.name.localeCompare(b.name)],
+  album: ['Album', (a, b) => (a.album?.name || '').localeCompare(b.album?.name || '')],
+  duration: ['Duration', (a, b) => a.duration - b.duration],
+};
+function listToolsHTML() {
+  return `<button class="icon-btn big-shuffle" data-hero-shuffle title="Shuffle play">${svg('shuffle')}</button>
+    <div class="list-tools">
+      <div class="filter-box">${svg('search')}<input id="listFilter" type="search" placeholder="Filter" autocomplete="off" spellcheck="false"></div>
+      <select id="listSort" title="Sort">${Object.entries(SORTS).map(([k, [n]]) => `<option value="${k}">${n}</option>`).join('')}</select>
+    </div>`;
+}
+function applyListFilter() {
+  const q = ($('#listFilter')?.value || '').trim().toLowerCase();
+  const tbl = $('.tracks[data-list="0"]'); if (!tbl) return;
+  let shown = 0;
+  for (const r of tbl.querySelectorAll('.trow')) { const ok = !q || r.dataset.q.includes(q); r.hidden = !ok; if (ok) shown++; }
+  const meta = $('#listCount'); if (meta) meta.textContent = q ? `${shown} of ${S.lists[0].tracks.length} songs match` : '';
+}
+function applyListSort(key) {
+  const L = S.lists[0], tbl = $('.tracks[data-list="0"] .tbody'); if (!L || !tbl) return;
+  const cmp = SORTS[key]?.[1];
+  L.tracks = cmp ? [...L.orig].sort(cmp) : L.orig;
+  tbl.innerHTML = trackRows(L.tracks, L);
+  store.set('sort:' + S.cur?.name, key);
+  applyListFilter(); markPlaying();
+}
+async function shufflePlay() {
+  const L = S.lists[0]; if (!L) return;
+  const ok = L.tracks.filter(t => t.playable); if (!ok.length) return;
+  if (L.context) {
+    await startPlayback({ context_uri: L.context, offset: { position: Math.floor(Math.random() * L.orig.length) } });
+    try { await api('/me/player/shuffle', { method: 'PUT', query: { state: true } }); if (S.now) S.now.shuffle = true; updatePlayerUI(); } catch {}
+  } else {
+    const sh = [...ok]; for (let i = sh.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [sh[i], sh[j]] = [sh[j], sh[i]]; }
+    playUris(sh.map(t => t.uri), 0);
+  }
+}
+function initListTools() {
+  const f = $('#listFilter'); if (!f) return;
+  let t; f.addEventListener('input', () => { clearTimeout(t); t = setTimeout(applyListFilter, 80); });
+  const sel = $('#listSort'), saved = store.get('sort:' + S.cur?.name, 'default');
+  sel.value = SORTS[saved] ? saved : 'default';
+  if (sel.value !== 'default') applyListSort(sel.value);
+  sel.onchange = () => applyListSort(sel.value);
+}
+
+function hero({ image, art, round, kind, title, desc, meta, pin, tools }) {
   S.heroPin = pin || null;
   return `<header class="hero">
     ${art || (image ? `<img class="hero-art ${round ? 'round' : ''}" src="${esc(image)}" alt="">` : `<div class="hero-art ph">${svg('music')}</div>`)}
     <div class="hero-text"><div class="hero-kind">${esc(kind)}</div><h1>${esc(title)}</h1>
-      ${desc ? `<p class="hero-desc">${esc(desc)}</p>` : ''}<div class="hero-meta">${meta || ''}</div></div>
+      ${desc ? `<p class="hero-desc">${esc(desc)}</p>` : ''}<div class="hero-meta">${meta || ''} <span id="listCount" class="muted"></span></div></div>
   </header><div class="actions pad"><button class="big-play" data-hero-play title="Play">${svg('play')}</button>
+    ${tools ? listToolsHTML() : ''}
     ${pin ? `<button class="pin-btn ${isPinned(pin) ? 'on' : ''}" data-pin-toggle title="${isPinned(pin) ? 'Unpin' : 'Pin to sidebar'}">${svg('pin')}<span>${isPinned(pin) ? 'Pinned' : 'Pin'}</span></button>` : ''}</div>`;
 }
 
@@ -814,12 +906,13 @@ async function viewSearch(el, _, alive) {
 async function viewLiked(el, _, alive) {
   const items = await pageAll('/me/tracks', { limit: 50 }, 2000);
   if (!alive()) return;
-  const tracks = items.map(i => norm(i.track)).filter(Boolean);
+  const tracks = items.map(i => { const t = norm(i.track); if (t) t.added = i.added_at; return t; }).filter(Boolean);
   el.innerHTML = hero({
-    art: `<div class="hero-art liked-art">${svg('heart')}</div>`, kind: 'Playlist', title: 'Liked Songs',
+    art: `<div class="hero-art liked-art">${svg('heart')}</div>`, kind: 'Playlist', title: 'Liked Songs', tools: tracks.length > 0,
     pin: { type: 'liked', id: '', uri: '', name: 'Liked Songs', image: '' },
     meta: `${esc(S.me?.display_name || '')} · ${tracks.length} songs`,
   }) + `<div class="pad">${tracks.length ? trackTable(tracks) : '<p class="muted">Tap the heart on any song to save it here.</p>'}</div>`;
+  initListTools();
 }
 
 async function viewPlaylist(el, id, alive) {
@@ -828,7 +921,7 @@ async function viewPlaylist(el, id, alive) {
   let tracks = [], note = '';
   try {
     const items = await pageAll(`/playlists/${id}/items`, { limit: 50 }, 2500);
-    tracks = items.map(i => norm(i.item || i.track)).filter(Boolean);
+    tracks = items.map(i => { const t = norm(i.item || i.track); if (t) t.added = i.added_at; return t; }).filter(Boolean);
   } catch (e) {
     note = e.status === 403 || e.status === 404
       ? 'Spotify only lets developer-mode apps list tracks for playlists you own or collaborate on. Hit play — it will still play.'
@@ -838,10 +931,11 @@ async function viewPlaylist(el, id, alive) {
   S.hero = { context: pl.uri };
   const total = pl.items?.total ?? pl.tracks?.total ?? tracks.length;
   el.innerHTML = hero({
-    image: img(pl.images), kind: pl.public === false ? 'Private playlist' : 'Playlist', title: pl.name,
+    image: img(pl.images), kind: pl.public === false ? 'Private playlist' : 'Playlist', title: pl.name, tools: tracks.length > 0,
     pin: { type: 'playlist', id: pl.id, uri: pl.uri, name: pl.name, image: img(pl.images, 64) },
     desc: stripHtml(pl.description), meta: `${esc(pl.owner?.display_name || '')} · ${total} songs`,
   }) + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri }) : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`;
+  initListTools();
 }
 
 async function viewAlbum(el, id, alive) {
@@ -914,6 +1008,114 @@ function bindPins() {
   });
 }
 
+/* ---------------- queue + lyrics drawer ---------------- */
+const D = { tab: null, lyrics: new Map(), cur: null, lines: [], active: -1 };
+function openDrawer(tab) {
+  if (D.tab === tab) return closeDrawer();
+  D.tab = tab;
+  $('#drawer').classList.remove('hidden');
+  $$('.drawer-tabs [data-dtab]').forEach(b => b.classList.toggle('on', b.dataset.dtab === tab));
+  $('#queueBtn').classList.toggle('on', tab === 'queue'); $('#lyricsBtn').classList.toggle('on', tab === 'lyrics');
+  tab === 'queue' ? renderQueue() : renderLyrics();
+}
+function closeDrawer() {
+  D.tab = null; $('#drawer').classList.add('hidden');
+  $('#queueBtn').classList.remove('on'); $('#lyricsBtn').classList.remove('on');
+}
+const qRow = (t, now) => `<div class="q-row ${now ? 'now' : ''}" ${t.album?.id ? `data-open="album:${esc(t.album.id)}"` : ''}>
+  ${img(t.album?.images || t.images, 64) ? `<img src="${esc(img(t.album?.images || t.images, 64))}" alt="" loading="lazy" decoding="async">` : `<div class="ph">${svg('music')}</div>`}
+  <div class="q-text"><div class="q-name">${esc(t.name)}</div><div class="q-artist">${esc((t.artists || []).map(a => a.name).join(', ') || t.show?.name || '')}</div></div>
+  <span class="q-dur">${fmt(t.duration_ms)}</span></div>`;
+async function renderQueue() {
+  const body = $('#drawerBody');
+  body.innerHTML = '<div class="loading small"><span></span><span></span><span></span></div>';
+  try {
+    const d = await api('/me/player/queue');
+    if (D.tab !== 'queue') return;
+    const nowT = d?.currently_playing, next = (d?.queue || []).filter(Boolean);
+    body.innerHTML = nowT
+      ? `<h4>Now playing</h4>${qRow(nowT, true)}<h4>Next up</h4>${next.length ? next.slice(0, 50).map(t => qRow(t)).join('') : '<p class="muted small-note">Nothing queued.</p>'}
+         <p class="muted small-note">Right-click any song → <b>Add to queue</b>. Spotify doesn’t let apps reorder or remove queued songs.</p>`
+      : '<p class="muted small-note">Start playing something to see what’s up next.</p>';
+  } catch (e) { body.innerHTML = `<p class="muted small-note">Couldn’t load the queue (${esc(e.message)}).</p>`; }
+}
+async function addToQueue(uri) {
+  try {
+    await api('/me/player/queue', { method: 'POST', query: { uri } });
+    toast('Added to queue');
+    if (D.tab === 'queue') setTimeout(renderQueue, 500);
+  } catch (e) { toast(e.status === 404 ? 'Start playing something first, then add to the queue.' : e.message); }
+}
+
+// ---- lyrics (LRCLIB) ----
+function parseLrc(text) {
+  const out = [];
+  for (const line of (text || '').split(/\r?\n/)) {
+    const tags = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    const words = line.replace(/\[[^\]]*\]/g, '').trim();
+    for (const m of tags) out.push({ t: (+m[1] * 60 + +m[2]) * 1000, text: words });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+const lyricsWanted = () => D.tab === 'lyrics' || (CFG.amp.lyricLine && ampOpen());
+async function loadLyrics(n) {
+  if (!n?.id) return null;
+  if (D.lyrics.has(n.id)) return D.lyrics.get(n.id);
+  const p = (async () => {
+    if (!IS_APP) return { none: true };
+    const r = await window.amplite.lyrics({ track: n.name, artist: n.artists[0]?.name || '', album: n.album?.name || '', duration: Math.round(n.duration / 1000) });
+    if (!r || r.error) return { none: true, error: r?.error };
+    if (r.instrumental) return { instrumental: true };
+    return { synced: parseLrc(r.syncedLyrics), plain: r.plainLyrics || '' };
+  })().catch(() => ({ none: true }));
+  D.lyrics.set(n.id, p);
+  return p;
+}
+async function renderLyrics() {
+  const body = $('#drawerBody'), n = S.now;
+  if (!n) { body.innerHTML = '<p class="muted small-note">Play a song to see its lyrics.</p>'; return; }
+  body.innerHTML = '<div class="loading small"><span></span><span></span><span></span></div>';
+  const L = await loadLyrics(n);
+  if (D.tab !== 'lyrics' || S.now?.id !== n.id) return;
+  D.cur = n.id; D.active = -1;
+  D.lines = L?.synced?.length ? L.synced : [];
+  if (D.lines.length) {
+    body.innerHTML = `<div class="lyrics synced">${D.lines.map((l, i) => `<p data-li="${i}" data-t="${l.t}">${esc(l.text) || '♪'}</p>`).join('')}</div><p class="muted small-note">Lyrics from LRCLIB · click a line to jump there</p>`;
+    tickLyrics(true);
+  } else if (L?.plain) body.innerHTML = `<div class="lyrics">${L.plain.split('\n').map(l => `<p>${esc(l) || '&nbsp;'}</p>`).join('')}</div><p class="muted small-note">Lyrics from LRCLIB (not synced)</p>`;
+  else if (L?.instrumental) body.innerHTML = '<p class="muted small-note">♪ Instrumental</p>';
+  else body.innerHTML = '<p class="muted small-note">No lyrics found for this song.</p>';
+}
+// Highlights the current line (drawer) and feeds the mini amp's lyric display.
+function tickLyrics(force) {
+  if (!D.lines.length || S.now?.id !== D.cur) { S.lyricLine = ''; return; }
+  const p = pos() + 150;
+  let i = D.lines.length - 1; while (i >= 0 && D.lines[i].t > p) i--;
+  S.lyricLine = i >= 0 ? D.lines[i].text : '';
+  if (i === D.active && !force) return;
+  D.active = i;
+  if (D.tab !== 'lyrics') return;
+  $$('#drawerBody .lyrics p.on').forEach(x => x.classList.remove('on'));
+  const el = $(`#drawerBody [data-li="${i}"]`);
+  if (el) { el.classList.add('on'); el.scrollIntoView({ block: 'center', behavior: CFG.ui.lite ? 'auto' : 'smooth' }); }
+}
+// Keeps lyrics in step with the song for whichever view wants them.
+async function syncLyricsForTrack() {
+  if (!lyricsWanted() || !S.now) return;
+  if (D.tab === 'lyrics') { if (D.cur !== S.now.id) renderLyrics(); return; }
+  const L = await loadLyrics(S.now);
+  if (L?.synced?.length && S.now) { D.lines = L.synced; D.cur = S.now.id; D.active = -1; }
+}
+function bindDrawer() {
+  $('#queueBtn').onclick = () => openDrawer('queue');
+  $('#lyricsBtn').onclick = () => openDrawer('lyrics');
+  $('#drawer').addEventListener('click', e => {
+    if (e.target.closest('[data-dclose]')) return closeDrawer();
+    const tb = e.target.closest('[data-dtab]'); if (tb) { D.tab = null; return openDrawer(tb.dataset.dtab); }
+    const ln = e.target.closest('[data-t]'); if (ln) seek(+ln.dataset.t);
+  });
+}
+
 /* ---------------- right-click menu ---------------- */
 function showCtx(e, items) {
   const m = $('#ctxMenu');
@@ -928,6 +1130,19 @@ function bindCtx() {
   const m = $('#ctxMenu');
   m.addEventListener('click', e => { const b = e.target.closest('[data-ctx]'); if (!b) return; m.classList.add('hidden'); m._items[+b.dataset.ctx].run(); });
   document.addEventListener('contextmenu', e => {
+    const row = e.target.closest('.trow');
+    if (row) {
+      e.preventDefault();
+      const L = S.lists[+row.closest('.tracks').dataset.list], t = L?.tracks[+row.dataset.idx]; if (!t) return;
+      const items = [
+        { icon: 'play', label: 'Play', run: () => playRow(row) },
+        { icon: 'queue', label: 'Add to queue', run: () => addToQueue(t.uri) },
+        '-',
+      ];
+      if (t.album?.id) items.push({ icon: 'disc', label: 'Go to album', run: () => navigate('album', t.album.id) });
+      if (t.artists?.[0]?.id) items.push({ icon: 'user', label: `Go to ${t.artists[0].name}`, run: () => navigate('artist', t.artists[0].id) });
+      return showCtx(e, items);
+    }
     const el = e.target.closest('[data-pinfo]');
     if (!el) return;
     e.preventDefault();
@@ -952,6 +1167,7 @@ function applyTheme(id) {
   store.set('theme', id);
   S.vizGrad = null;
   $$('.theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === id));
+  applyAccent();
   if (IS_APP) {
     const cs = getComputedStyle(document.documentElement);
     window.amplite.setTheme({ bg: cs.getPropertyValue('--bg').trim(), text: cs.getPropertyValue('--text').trim() });
@@ -968,7 +1184,7 @@ const ampEl = $('#amp');
 const A = {
   time: $('#ampTime', ampEl), state: $('#ampState', ampEl), marq: $('#ampMarq', ampEl), viz: $('#ampViz', ampEl),
   seek: $('#ampSeek', ampEl), vol: $('#ampVol', ampEl), dev: $('#ampDev', ampEl), art: $('#ampArt', ampEl),
-  shuf: $('[data-amp="shuffle"]', ampEl), rep: $('[data-amp="repeat"]', ampEl),
+  shuf: $('[data-amp="shuffle"]', ampEl), rep: $('[data-amp="repeat"]', ampEl), eqBtn: $('[data-amp="eq"]', ampEl), eq: $('#ampEq', ampEl),
 };
 const ampOpen = () => !!S.ampWin || S.ampMode === 'inline';
 
@@ -1010,6 +1226,8 @@ async function openPip() {
     }
   }
   w.document.documentElement.dataset.theme = document.documentElement.dataset.theme;
+  if (IS_APP) w.document.documentElement.classList.add('is-app');
+  S.ampWin = w; applyAccent(); S.ampWin = null;
   w.document.title = 'Amplite';
   w.document.body.classList.add('pip-body');
   w.document.body.append(ampEl);
@@ -1028,6 +1246,7 @@ setInterval(() => { if (S.ampWin?.closed) onAmpWinClosed(); }, 500);
 
 async function toggleAmp() {
   closeSettings();
+  setTimeout(syncLyricsForTrack, 800);
   if (S.ampWin) return S.ampWin.close();
   if (S.ampMode === 'inline') return closeInline();
   if (IS_APP || 'documentPictureInPicture' in window) {
@@ -1080,6 +1299,8 @@ function applyAmp() {
   if (V.h.length !== n) { V.h = new Float32Array(n); V.pk = new Float32Array(n); V.tg = new Float32Array(n); }
   A.viz.width = n * BAR_W - 1; A.viz.style.width = A.viz.width + 'px';
   S.ampRemain = c.time === 'remaining';
+  A.eq.classList.toggle('hidden', !c.eqOpen || !IS_APP);
+  syncEq();
   S.vizGrad = null; V.text = ''; V.idle = false;
   fitAmp();
 }
@@ -1092,7 +1313,7 @@ async function fitAmp() {
   const w = Math.ceil(r.width * (r.width < ampEl.offsetWidth * z - 2 ? z : 1));
   const h = Math.ceil(r.height * (r.height < ampEl.offsetHeight * z - 2 ? z : 1));
   try { S.ampWin.resizeTo(w, h); } catch {}
-  window.amplite.ampWindow({ opacity: CFG.amp.opacity / 100, onTop: CFG.amp.onTop });
+  window.amplite.ampWindow({ opacity: CFG.amp.opacity / 100, onTop: CFG.amp.onTop, snap: CFG.amp.snap, corner: CFG.amp.corner !== 'none' ? CFG.amp.corner : null });
 }
 
 // Simulated spectrum (Spotify's DRM audio can't be analysed in the browser).
@@ -1125,7 +1346,7 @@ function drawAmp(t) {
     if (!S.ampSeeking) setRange(A.seek, d ? p / d : 0);
   }
   if (c.marquee) {
-    const txt = n ? `${n.artists.map(a => a.name).join(', ')} - ${n.name} (${fmt(n.duration)})` : 'AMPLITE  ·  PICK A SONG TO START';
+    const txt = c.lyricLine && S.lyricLine ? '♪ ' + S.lyricLine : n ? `${n.artists.map(a => a.name).join(', ')} - ${n.name} (${fmt(n.duration)})` : 'AMPLITE  ·  PICK A SONG TO START';
     if (c.scroll === 'static') { if (txt !== V.text) { V.text = txt; A.marq.textContent = txt; } }
     else if (t - V.lastMarq > (SCROLL_MS[c.scroll] || 220)) {
       V.lastMarq = t;
@@ -1197,6 +1418,8 @@ function onKey(e) {
   else if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight') { e.preventDefault(); next(); }
   else if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
   else if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.altKey) toggleAmp();
+  else if (e.key.toLowerCase() === 'q' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openDrawer('queue');
+  else if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openDrawer('lyrics');
   else if (e.key === '/' && !S.ampWin) { e.preventDefault(); navigate('search'); }
 }
 
@@ -1245,6 +1468,7 @@ function bind() {
     if (play) { e.stopPropagation(); playContext(play.dataset.play); return; }
     if (e.target.closest('[data-hero-play]')) { playHero(); return; }
     if (e.target.closest('[data-pin-toggle]')) { togglePin(S.heroPin); return; }
+    if (e.target.closest('[data-hero-shuffle]')) { shufflePlay(); return; }
     const num = e.target.closest('.tnum');
     if (num) { playRow(num.closest('.trow')); return; }
     const open = e.target.closest('[data-open]');
@@ -1264,7 +1488,7 @@ function bind() {
       prev, next, stop, shuffle: toggleShuffle, repeat: cycleRepeat,
       play: () => (S.now && !S.now.paused ? seek(0) : resume()),
       pause: () => (S.now?.paused ? resume() : pause()),
-      popout: ampPopToggle, close: ampClose,
+      popout: ampPopToggle, close: ampClose, eq: toggleAmpEq,
     })[b.dataset.amp]?.();
   });
   A.time.onclick = () => { S.ampRemain = !S.ampRemain; };
@@ -1273,8 +1497,93 @@ function bind() {
   A.vol.oninput = () => setVolume(A.vol.value / 100);
 }
 
+/* ---------------- equalizer (built-in engine only) ---------------- */
+const EQ_BANDS = ['31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'];
+const EQ_PRESETS = {
+  flat: ['Flat', [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+  bass: ['Bass boost', [6, 5, 4, 2, 0, 0, 0, 0, 0, 0]],
+  treble: ['Treble boost', [0, 0, 0, 0, 0, 1, 2, 4, 5, 6]],
+  vocal: ['Vocal', [-2, -2, -1, 1, 3, 4, 3, 1, 0, -1]],
+  rock: ['Rock', [4, 3, 2, 0, -1, -1, 1, 3, 4, 4]],
+  pop: ['Pop', [-1, 1, 3, 4, 3, 0, -1, -1, 1, 2]],
+  electronic: ['Electronic', [5, 4, 1, 0, -2, 1, 0, 2, 4, 5]],
+  hiphop: ['Hip-hop', [5, 4, 2, 3, -1, -1, 1, -1, 2, 3]],
+  acoustic: ['Acoustic', [3, 2, 1, 1, 2, 2, 3, 3, 2, 1]],
+  loudness: ['Loudness', [5, 3, 0, 0, -2, 0, -1, 0, 3, 4]],
+};
+const eqAvailable = () => IS_APP && useEngine();
+let eqT;
+function applyEq() {
+  const e = CFG.eq;
+  if (IS_APP) {
+    clearTimeout(eqT);
+    const boost = Math.max(0, ...e.gains);
+    eqT = setTimeout(() => window.amplite.setEq({ enabled: e.enabled, preamp: e.preamp - (e.auto ? boost : 0), gains: e.gains }), 60);
+  }
+  syncEq();
+}
+function eqHTML() {
+  return `<div class="eq-top">
+      <label class="eq-power"><input type="checkbox" data-eqk="enabled"><span>EQ ON</span></label>
+      <label class="eq-power" title="Lowers the preamp automatically so boosts never clip"><input type="checkbox" data-eqk="auto"><span>AUTO</span></label>
+      <select data-eqk="preset" class="eq-preset">${Object.entries(EQ_PRESETS).map(([k, [n]]) => `<option value="${k}">${n}</option>`).join('')}<option value="custom">Custom</option></select>
+    </div>
+    <div class="eq-bands">
+      <div class="eq-band pre"><input type="range" min="-12" max="12" step="0.5" data-eqk="preamp" aria-label="Preamp"><span>PRE</span></div>
+      ${EQ_BANDS.map((b, i) => `<div class="eq-band"><input type="range" min="-12" max="12" step="0.5" data-eqi="${i}" aria-label="${b} Hz"><span>${b}</span></div>`).join('')}
+    </div>
+    <p class="eq-note"></p>`;
+}
+function syncEq() {
+  const e = CFG.eq, docs = [ampEl, $('#setPanes')].filter(Boolean);
+  for (const root of docs) {
+    $$('[data-eqk="enabled"]', root).forEach(i => { i.checked = e.enabled; });
+    $$('[data-eqk="auto"]', root).forEach(i => { i.checked = e.auto; });
+    $$('[data-eqk="preset"]', root).forEach(i => { i.value = e.preset; });
+    $$('[data-eqk="preamp"]', root).forEach(i => { i.value = e.preamp; i.title = `Preamp ${e.preamp} dB`; });
+    $$('[data-eqi]', root).forEach(i => { i.value = e.gains[+i.dataset.eqi]; i.title = `${EQ_BANDS[+i.dataset.eqi]} Hz: ${e.gains[+i.dataset.eqi]} dB`; });
+    $$('.eq-note', root).forEach(n => { n.textContent = eqAvailable() ? '' : 'The equalizer works with the built-in engine. It’s off while Amplite plays through the web player or the Spotify app.'; });
+    $$('.amp-eq, .eq-wrap', root).forEach(w => w.classList.toggle('eq-disabled', !eqAvailable() || !e.enabled));
+  }
+  A.eqBtn?.classList.toggle('on', CFG.amp.eqOpen);
+}
+function bindEq(root) {
+  root.addEventListener('input', e => {
+    const t = e.target;
+    if (t.dataset.eqi != null) { const g = [...CFG.eq.gains]; g[+t.dataset.eqi] = +t.value; CFG.eq.preset = 'custom'; setK('eq.gains', g); }
+    else if (t.dataset.eqk === 'preamp') setK('eq.preamp', +t.value);
+  });
+  root.addEventListener('change', e => {
+    const t = e.target;
+    if (t.dataset.eqk === 'enabled') setK('eq.enabled', t.checked);
+    else if (t.dataset.eqk === 'auto') setK('eq.auto', t.checked);
+    else if (t.dataset.eqk === 'preset' && EQ_PRESETS[t.value]) { CFG.eq.gains = [...EQ_PRESETS[t.value][1]]; CFG.eq.enabled = true; setK('eq.preset', t.value); }
+  });
+  root.addEventListener('dblclick', e => { const t = e.target.closest('[data-eqi]'); if (t) { const g = [...CFG.eq.gains]; g[+t.dataset.eqi] = 0; CFG.eq.preset = 'custom'; setK('eq.gains', g); } });
+}
+function toggleAmpEq() {
+  setK('amp.eqOpen', !CFG.amp.eqOpen);
+}
+
 /* ---------------- UI prefs (sidebar, lite mode) ---------------- */
+// Custom accent: overrides the theme's highlight colour; text on it is black or white, whichever reads better.
+const ACCENTS = ['#1ed760', '#7c9cff', '#ff5c8a', '#ffb000', '#2ec4b6', '#bd93f9', '#ff6b35', '#ffffff'];
+function onAccent(hex) {
+  const n = parseInt(hex.slice(1), 16), r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255;
+  const L = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * L(r) + 0.7152 * L(g) + 0.0722 * L(b) > 0.4 ? '#000000' : '#ffffff';
+}
+function applyAccent() {
+  const a = CFG.ui.accent, docs = [document, S.ampWin?.document].filter(Boolean);
+  for (const d of docs) {
+    const st = d.documentElement.style;
+    if (/^#[0-9a-f]{6}$/i.test(a || '')) { st.setProperty('--accent', a); st.setProperty('--on-accent', onAccent(a)); }
+    else { st.removeProperty('--accent'); st.removeProperty('--on-accent'); }
+  }
+}
 function applyUI() {
+  applyAccent();
+  if (IS_APP) window.amplite.setPrefs({ closeToTray: CFG.ui.closeToTray, startup: CFG.ui.startup, hwAccel: CFG.ui.hwAccel });
   $('#app').classList.toggle('side-min', !!CFG.ui.sideMin);
   document.documentElement.classList.toggle('lite', !!CFG.ui.lite);
   const t = $('#sideToggle'); if (t) t.title = (CFG.ui.sideMin ? 'Expand' : 'Collapse') + ' sidebar (Ctrl+B)';
@@ -1302,7 +1611,13 @@ function settingsHTML() {
     .map(([k, t]) => `<label>${t}<input type="color" data-color="${k}"></label>`).join('');
   return {
     general: grp('Layout', sw('ui.sideMin', 'Collapse sidebar', 'Icons only. Shortcut: Ctrl+B'))
-      + grp('Performance', sw('ui.lite', 'Lite mode', 'Turns off animations, blur and shadows to save CPU/GPU'))
+      + grp('Accent color', `<div class="set-row"><div class="lbl">Highlight color<small>Works with any theme</small></div>
+          <div class="ctl accents">${ACCENTS.map(c => `<button class="acc" data-accent="${c}" style="background:${c}" title="${c}"></button>`).join('')}
+          <input type="color" id="accentPick" title="Pick any color"><button class="btn" data-accent="">Theme default</button></div></div>`)
+      + (IS_APP ? grp('Windows', seg('ui.startup', 'Start with Windows', [['off', 'Off'], ['normal', 'Open window'], ['tray', 'In tray'], ['amp', 'Mini amp']], 'Launch Amplite when you sign in to Windows')
+        + sw('ui.closeToTray', 'Close to tray', 'Closing the window keeps Amplite playing in the system tray')) : '')
+      + grp('Performance', sw('ui.lite', 'Lite mode', 'Turns off animations, blur and shadows to save CPU/GPU')
+        + (IS_APP ? sw('ui.hwAccel', 'Hardware acceleration', 'Turning it off can lower memory use on PCs with weak graphics; uses a bit more CPU (takes effect after restart)') : ''))
       + grp('Theme', `<div class="theme-list" id="setThemes"></div>`),
     amp: `<div class="amp-preview" id="ampPreview"><p class="muted" id="ampPreviewNote" style="font-size:12px"></p></div>`
       + grp('Skin', `<div class="skins">${skinBtns}</div><div class="colors" id="ampColors" ${CFG.amp.skin === 'custom' ? '' : 'hidden'}>${colorInputs}</div>`)
@@ -1322,8 +1637,11 @@ function settingsHTML() {
         + sw('amp.seek', 'Seek bar') + sw('amp.controls', 'Playback buttons') + sw('amp.toggles', 'Shuffle / repeat'))
       + grp('Text',
         seg('amp.scroll', 'Title scrolling', [['static', 'Off'], ['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']])
-        + seg('amp.time', 'Clock shows', [['elapsed', 'Elapsed'], ['remaining', 'Remaining']]))
-      + (IS_APP ? grp('Window', rng('amp.opacity', 'Opacity', 40, 100, 5, '%') + sw('amp.onTop', 'Always on top')) : '')
+        + seg('amp.time', 'Clock shows', [['elapsed', 'Elapsed'], ['remaining', 'Remaining']])
+        + (IS_APP ? sw('amp.lyricLine', 'Show lyrics on the display', 'The song title line shows the current lyric when synced lyrics are available') : ''))
+      + (IS_APP ? grp('Window', rng('amp.opacity', 'Opacity', 40, 100, 5, '%') + sw('amp.onTop', 'Always on top')
+        + sw('amp.snap', 'Snap to screen edges', 'Drop the amp near an edge or corner and it sticks there')
+        + seg('amp.corner', 'Open in corner', [['none', 'Last spot'], ['tl', '↖'], ['tr', '↗'], ['bl', '↙'], ['br', '↘']])) : '')
       + grp('Reset', `<div class="set-row"><div class="lbl">Restore the default mini amp</div><button class="btn ctl" id="ampReset">Reset</button></div>`),
     audio: grp('Audio engine', `<div class="engine-line" id="engineLine"></div>`)
       + grp('Playback source',
@@ -1331,6 +1649,7 @@ function settingsHTML() {
           'Automatic: built-in engine (320 kbps) → Amplite web player (official DRM) → hidden Spotify app, using the first one Spotify allows for your account')
         + sw('audio.hideSpotify', 'Hide the Spotify window', 'When Amplite has to use the Spotify app, keep it invisible and close it when Amplite quits')
         + `<div class="set-row"><div class="lbl">Retry automatic detection<small>Forgets what was refused before and tries the built-in engine, then the web player, again</small></div><button class="btn ctl" id="engRetry">Retry</button></div>`)
+      + grp('Equalizer', `<div class="eq-wrap">${eqHTML()}</div>`)
       + grp('Quality (built-in engine)',
         seg('audio.bitrate', 'Streaming quality', [[320, 'Very high · 320'], [160, 'High · 160'], [96, 'Normal · 96']], 'kbps Ogg Vorbis. Very high needs Premium', true)
         + sw('audio.normalise', 'Normalize volume', 'Keeps loudness consistent between songs'))
@@ -1360,6 +1679,8 @@ function syncControls() {
   const cols = $('#ampColors'); if (cols) cols.hidden = CFG.amp.skin !== 'custom';
   $$('[data-color]', root).forEach(i => { i.value = CFG.amp.colors[i.dataset.color]; });
   $$('#setThemes .theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === document.documentElement.dataset.theme));
+  $$('.acc', root).forEach(b => b.classList.toggle('on', b.dataset.accent.toLowerCase() === (CFG.ui.accent || '').toLowerCase()));
+  const pick = $('#accentPick'); if (pick) pick.value = CFG.ui.accent || '#7c9cff';
 }
 
 function previewAmp(on) {
@@ -1415,6 +1736,8 @@ function bindSettings(root) {
       }
       setK('amp.skin', skin.dataset.skin); return;
     }
+    const ac = e.target.closest('[data-accent]');
+    if (ac) { setK('ui.accent', ac.dataset.accent); applyAmp(); return; }
     const th = e.target.closest('#setThemes .theme-opt');
     if (th) { applyTheme(th.dataset.theme); syncControls(); applyAmp(); return; }
     if (e.target.closest('#ampReset')) { CFG.amp = clone(AMP_DEFAULTS); store.set('cfg', CFG); applyAmp(); syncControls(); toast('Mini amp reset'); return; }
@@ -1432,7 +1755,9 @@ function bindSettings(root) {
     const el = e.target;
     if (el.dataset.k && el.type === 'range') setK(el.dataset.k, +el.value);
     if (el.dataset.color) { CFG.amp.colors[el.dataset.color] = el.value; setK('amp.skin', 'custom'); }
+    if (el.id === 'accentPick') { setK('ui.accent', el.value); S.vizGrad = null; }
   });
+  bindEq(root);
   $('#setTabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); };
   $('#settings').addEventListener('click', e => { if (e.target.id === 'settings' || e.target.closest('[data-close-settings]')) closeSettings(); });
 }
@@ -1474,6 +1799,36 @@ function initUpdates() {
   $('#updMenuBtn').onclick = check;
 }
 
+/* ---------------- speed: prefetch on hover, adaptive polling ---------------- */
+const PREFETCH = {
+  playlist: id => [api(`/playlists/${id}`), api(`/playlists/${id}/items`, { query: { limit: 50, offset: 0 } })],
+  album: id => [api(`/albums/${id}`)],
+  artist: id => [api(`/artists/${id}`), api(`/artists/${id}/albums`, { query: { include_groups: 'album,single', limit: 10 } })],
+  liked: () => [api('/me/tracks', { query: { limit: 50, offset: 0 } })],
+};
+function bindPrefetch() {
+  let t, last = '';
+  document.addEventListener('mouseover', e => {
+    const el = e.target.closest('[data-open]'); if (!el) return;
+    const v = el.dataset.open; if (v === last) return;
+    clearTimeout(t);
+    t = setTimeout(() => {
+      last = v;
+      const i = v.indexOf(':'), kind = v.slice(0, i), id = v.slice(i + 1);
+      try { PREFETCH[kind]?.(id)?.forEach(p => p.catch(() => {})); } catch {}
+    }, 90);
+  }, { passive: true });
+}
+// Poll fast while music is playing and someone can see it, slowly otherwise.
+function schedulePoll() {
+  const visible = !document.hidden || ampOpen();
+  const playing = S.now && !S.now.paused;
+  const ms = !visible ? 15000 : playing ? 3000 : 8000;
+  clearTimeout(S.pollT);
+  S.pollT = setTimeout(async () => { await poll(); schedulePoll(); }, ms);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { poll(); schedulePoll(); } });
+
 /* ---------------- boot ---------------- */
 function showLogin(err) {
   $('#app').classList.add('hidden');
@@ -1486,7 +1841,7 @@ async function boot() {
   if (IS_APP) {
     try { S.appVersion = (await window.amplite.info()).version; } catch {}
     document.documentElement.classList.add('is-app');
-    window.amplite.onMedia(cmd => ({ toggle: togglePlay, next, prev, stop })[cmd]?.());
+    window.amplite.onMedia(cmd => ({ toggle: togglePlay, next, prev, stop, amp: toggleAmp })[cmd]?.());
     $('[data-amp="popout"]').remove();
     $('[data-amp="close"]').title = 'Back to full player';
     $('.amp-hint').textContent = '';
@@ -1494,6 +1849,7 @@ async function boot() {
   }
   $$('[data-i]').forEach(el => el.insertAdjacentHTML('afterbegin', svg(el.dataset.i)));
   $$('[data-logo]').forEach(el => { el.innerHTML = LOGO; });
+  A.eq.innerHTML = eqHTML(); bindEq(A.eq);
   renderThemes();
   bind();
   applyUI();
@@ -1517,12 +1873,19 @@ async function boot() {
 
   updatePlayerUI();
   if (S.me.product && S.me.product !== 'premium') toast('Heads up: Spotify only allows playback in Amplite on Premium accounts. You can still browse.');
-  renderPins(); bindPins(); bindCtx();
+  renderPins(); bindPins(); bindCtx(); bindDrawer();
   await loadPlaylists();
   navigate('home');
   if (IS_APP) initEngine(); else initSDK();
+  if (IS_APP && (await window.amplite.startupMode()) === 'amp') setTimeout(() => toggleAmp(), 600);
   poll();
-  setInterval(poll, 3000);
+  schedulePoll();
+  bindPrefetch();
+  // Background refreshes: update the sidebar / home if Spotify returned something new.
+  swrListeners.push(url => {
+    if (url.includes('/me/playlists')) loadPlaylists();
+    else if (/recently-played|top\/tracks/.test(url) && S.cur?.name === 'home') navigate('home', '', false);
+  });
   setInterval(tickBar, 250);
   startViz();
 }

@@ -1,0 +1,219 @@
+diff --git a/playback/src/amplite_eq.rs b/playback/src/amplite_eq.rs
+new file mode 100644
+index 0000000..292d97d
+--- /dev/null
++++ b/playback/src/amplite_eq.rs
+@@ -0,0 +1,121 @@
++// Amplite: 10-band graphic equalizer applied to decoded samples (interleaved stereo, 44.1 kHz).
++// Settings come from the file named in AMPLITE_EQ_FILE, written by the Amplite UI:
++//   "<enabled 0|1> <preamp dB> <g31> <g62> <g125> <g250> <g500> <g1k> <g2k> <g4k> <g8k> <g16k>"
++// The file is re-read at most every 150 ms, so changes apply live while music plays.
++use std::path::PathBuf;
++use std::time::{Instant, SystemTime};
++
++const FREQS: [f64; 10] = [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
++const Q: f64 = 1.41;
++const SAMPLE_RATE: f64 = 44100.0;
++
++#[derive(Clone, Copy, Default)]
++struct Biquad { b0: f64, b1: f64, b2: f64, a1: f64, a2: f64 }
++
++#[derive(Clone, Copy, Default)]
++struct State { x1: f64, x2: f64, y1: f64, y2: f64 }
++
++impl Biquad {
++    // RBJ audio-EQ-cookbook peaking filter.
++    fn peaking(freq: f64, gain_db: f64) -> Self {
++        let a = 10f64.powf(gain_db / 40.0);
++        let w0 = 2.0 * std::f64::consts::PI * (freq.min(SAMPLE_RATE * 0.45)) / SAMPLE_RATE;
++        let alpha = w0.sin() / (2.0 * Q);
++        let cos = w0.cos();
++        let a0 = 1.0 + alpha / a;
++        Biquad {
++            b0: (1.0 + alpha * a) / a0,
++            b1: (-2.0 * cos) / a0,
++            b2: (1.0 - alpha * a) / a0,
++            a1: (-2.0 * cos) / a0,
++            a2: (1.0 - alpha / a) / a0,
++        }
++    }
++    #[inline]
++    fn run(&self, s: &mut State, x: f64) -> f64 {
++        let y = self.b0 * x + self.b1 * s.x1 + self.b2 * s.x2 - self.a1 * s.y1 - self.a2 * s.y2;
++        s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = y;
++        y
++    }
++}
++
++pub struct AmpliteEq {
++    path: Option<PathBuf>,
++    last_check: Instant,
++    mtime: Option<SystemTime>,
++    active: bool,
++    preamp: f64,
++    filters: Vec<(Biquad, [State; 2])>,
++    channel: usize,
++}
++
++impl AmpliteEq {
++    pub fn new() -> Self {
++        let path = std::env::var_os("AMPLITE_EQ_FILE").map(PathBuf::from);
++        let mut eq = AmpliteEq { path, last_check: Instant::now(), mtime: None, active: false, preamp: 1.0, filters: Vec::new(), channel: 0 };
++        eq.reload(true);
++        eq
++    }
++
++    fn reload(&mut self, force: bool) {
++        let Some(path) = self.path.clone() else { return };
++        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
++        if !force && mtime == self.mtime { return; }
++        self.mtime = mtime;
++        let text = std::fs::read_to_string(&path).unwrap_or_default();
++        let v: Vec<f64> = text.split_whitespace().filter_map(|t| t.parse().ok()).collect();
++        if v.len() < 12 || v[0] < 0.5 { self.active = false; return; }
++        let gains = &v[2..12];
++        let old: Vec<[State; 2]> = self.filters.iter().map(|f| f.1).collect();
++        self.filters = FREQS.iter().zip(gains).enumerate()
++            .map(|(i, (f, g))| (Biquad::peaking(*f, g.clamp(-15.0, 15.0)), old.get(i).copied().unwrap_or_default()))
++            .collect();
++        self.preamp = 10f64.powf(v[1].clamp(-24.0, 12.0) / 20.0);
++        self.active = gains.iter().any(|g| g.abs() > 0.05) || (self.preamp - 1.0).abs() > 1e-6;
++    }
++
++    pub fn process(&mut self, data: &mut [f64]) {
++        if self.path.is_none() { return; }
++        if self.last_check.elapsed().as_millis() >= 150 {
++            self.last_check = Instant::now();
++            self.reload(false);
++        }
++        if !self.active { return; }
++        for sample in data.iter_mut() {
++            let ch = self.channel;
++            self.channel ^= 1;
++            let mut x = *sample * self.preamp;
++            for (bq, st) in self.filters.iter_mut() { x = bq.run(&mut st[ch], x); }
++            *sample = x.clamp(-1.0, 1.0);
++        }
++    }
++}
++
++impl Default for AmpliteEq { fn default() -> Self { Self::new() } }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn rms_after(gains: &str, freq: f64) -> f64 {
++        let path = std::env::temp_dir().join(format!("amplite_eq_test_{}_{}.txt", freq as u32, gains.len()));
++        std::fs::write(&path, gains).unwrap();
++        unsafe { std::env::set_var("AMPLITE_EQ_FILE", &path); }
++        let mut eq = AmpliteEq::new();
++        let n = 44100;
++        let mut data: Vec<f64> = (0..n * 2).map(|i| 0.1 * (2.0 * std::f64::consts::PI * freq * (i / 2) as f64 / SAMPLE_RATE).sin()).collect();
++        eq.process(&mut data);
++        let tail = &data[n..];
++        (tail.iter().map(|x| x * x).sum::<f64>() / tail.len() as f64).sqrt()
++    }
++    #[test]
++    fn boosts_and_bypasses() {
++        let flat = rms_after("1 0 0 0 0 0 0 0 0 0 0 0", 1000.0);
++        let off = rms_after("0 0 0 0 0 0 0 12 0 0 0 0", 1000.0);
++        let boost = rms_after("1 0 0 0 0 0 0 12 0 0 0 0", 1000.0);
++        let other = rms_after("1 0 0 0 0 0 0 12 0 0 0 0", 60.0);
++        println!("flat={flat:.4} off={off:.4} boost1k={boost:.4} (ratio {:.2}) 60Hz-with-1k-boost={other:.4}", boost / flat);
++        assert!((off - flat).abs() < 1e-3);
++        assert!(boost / flat > 3.5 && boost / flat < 4.5);
++        assert!((other / flat) < 1.2);
++    }
++}
+diff --git a/playback/src/lib.rs b/playback/src/lib.rs
+index a637f00..a6ab85f 100644
+--- a/playback/src/lib.rs
++++ b/playback/src/lib.rs
+@@ -5,6 +5,7 @@ use librespot_audio as audio;
+ use librespot_core as core;
+ use librespot_metadata as metadata;
+ 
++mod amplite_eq;
+ pub mod audio_backend;
+ pub mod config;
+ pub mod convert;
+diff --git a/playback/src/player.rs b/playback/src/player.rs
+index 9c09be5..9629a7c 100644
+--- a/playback/src/player.rs
++++ b/playback/src/player.rs
+@@ -95,6 +95,8 @@ struct PlayerInternal {
+     last_progress_update: Instant,
+ 
+     local_file_lookup: Arc<LocalFileLookup>,
++
++    amplite_eq: crate::amplite_eq::AmpliteEq,
+ }
+ 
+ static PLAYER_COUNTER: AtomicUsize = AtomicUsize::new(0);
+@@ -510,6 +512,7 @@ impl Player {
+                 last_progress_update: Instant::now(),
+ 
+                 local_file_lookup: Arc::new(local_file_lookup),
++                amplite_eq: crate::amplite_eq::AmpliteEq::new(),
+             };
+ 
+             // While PlayerInternal is written as a future, it still contains blocking code.
+@@ -1007,32 +1010,34 @@ impl PlayerTrackLoader {
+         );
+ 
+         // (Most) podcasts seem to support only 96 kbps Ogg Vorbis, so fall back to it
++        // Amplite: always prefer Ogg Vorbis (any quality) over MP3. Some accounts/regions
++        // only expose encrypted MP3 at the top bitrate, which can't be decrypted and would skip.
+         let formats = match self.config.bitrate {
+             Bitrate::Bitrate96 => [
+                 AudioFileFormat::OGG_VORBIS_96,
+-                AudioFileFormat::MP3_96,
+                 AudioFileFormat::OGG_VORBIS_160,
++                AudioFileFormat::OGG_VORBIS_320,
++                AudioFileFormat::MP3_96,
+                 AudioFileFormat::MP3_160,
+                 AudioFileFormat::MP3_256,
+-                AudioFileFormat::OGG_VORBIS_320,
+                 AudioFileFormat::MP3_320,
+             ],
+             Bitrate::Bitrate160 => [
+                 AudioFileFormat::OGG_VORBIS_160,
+-                AudioFileFormat::MP3_160,
++                AudioFileFormat::OGG_VORBIS_320,
+                 AudioFileFormat::OGG_VORBIS_96,
+-                AudioFileFormat::MP3_96,
++                AudioFileFormat::MP3_160,
+                 AudioFileFormat::MP3_256,
+-                AudioFileFormat::OGG_VORBIS_320,
+                 AudioFileFormat::MP3_320,
++                AudioFileFormat::MP3_96,
+             ],
+             Bitrate::Bitrate320 => [
+                 AudioFileFormat::OGG_VORBIS_320,
++                AudioFileFormat::OGG_VORBIS_160,
++                AudioFileFormat::OGG_VORBIS_96,
+                 AudioFileFormat::MP3_320,
+                 AudioFileFormat::MP3_256,
+-                AudioFileFormat::OGG_VORBIS_160,
+                 AudioFileFormat::MP3_160,
+-                AudioFileFormat::OGG_VORBIS_96,
+                 AudioFileFormat::MP3_96,
+             ],
+         };
+@@ -1054,6 +1059,7 @@ impl PlayerTrackLoader {
+                 }
+             };
+ 
++        info!("Amplite format: {format:?}");
+         let bytes_per_second = self.stream_data_rate(format)?;
+ 
+         // This is only a loop to be able to reload the file if an error occurred
+@@ -1744,6 +1750,8 @@ impl PlayerInternal {
+             Some((_, mut packet)) => {
+                 if !packet.is_empty() {
+                     if let AudioPacket::Samples(ref mut data) = packet {
++                        // Amplite: graphic equalizer (no-op unless enabled in the app).
++                        self.amplite_eq.process(data);
+                         // Get the volume for the packet. In the case of hardware volume control
+                         // this will always be 1.0 (no change).
+                         let volume = self.volume_getter.attenuation_factor();

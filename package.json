@@ -1,7 +1,7 @@
 {
   "name": "amplite",
   "productName": "Amplite",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "A lightweight Spotify desktop player with themes and a mini amp.",
   "main": "main.js",
   "author": "larosa023",
@@ -28,7 +28,12 @@
       "preload.js",
       "engine.js",
       "src/**/*",
-      "build/icon.png"
+      "build/icon.png",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/LICENSE*",
+      "!**/test/**",
+      "!**/*.d.ts"
     ],
     "afterPack": "build/vmp-sign.js",
     "directories": {
@@ -69,7 +74,11 @@
           "librespot*"
         ]
       }
-    ]
+    ],
+    "electronLanguages": [
+      "en-US"
+    ],
+    "compression": "maximum"
   },
   "dependencies": {
     "electron-updater": "^6.8.11"

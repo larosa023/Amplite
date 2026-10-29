@@ -68,6 +68,13 @@
         </div>
       </header>
       <section id="view" class="view"></section>
+      <aside id="drawer" class="drawer hidden" aria-label="Queue and lyrics">
+        <header class="drawer-head">
+          <div class="drawer-tabs"><button data-dtab="queue">Queue</button><button data-dtab="lyrics">Lyrics</button></div>
+          <button class="round-btn" data-dclose data-i="x" title="Close"></button>
+        </header>
+        <div id="drawerBody" class="drawer-body"></div>
+      </aside>
     </main>
 
     <footer class="player">
@@ -95,6 +102,8 @@
       </div>
       <div class="extra">
         <button id="deviceBtn" class="device-chip hidden"></button>
+        <button id="lyricsBtn" class="icon-btn toggle" data-i="mic" title="Lyrics (L)"></button>
+        <button id="queueBtn" class="icon-btn toggle" data-i="queue" title="Queue (Q)"></button>
         <button id="muteBtn" class="icon-btn" title="Mute"></button>
         <input id="vol" class="range vol" type="range" min="0" max="100" aria-label="Volume">
         <button id="ampBtn" class="amp-btn" data-i="amp" title="Mini Amp (M)"><span>AMP</span></button>
@@ -139,7 +148,9 @@
           <span class="amp-sep"></span>
           <button data-amp="shuffle" class="amp-tog" title="Shuffle">SHUF</button>
           <button data-amp="repeat" class="amp-tog" title="Repeat">REP</button>
+          <button data-amp="eq" class="amp-tog app-only" title="Equalizer">EQ</button>
         </div>
+        <div class="amp-eq hidden" id="ampEq"></div>
       </div>
     </div>
     <p class="amp-hint">Press <kbd>M</kbd> or ✕ to return to the full player</p>

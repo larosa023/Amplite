@@ -1,6 +1,6 @@
 // Amplite — desktop shell (Electron). Audio comes from the bundled librespot engine (engine.js);
 // the castLabs build keeps Widevine available as a fallback player.
-const { app, BrowserWindow, components, ipcMain, globalShortcut, shell, Menu } = require('electron');
+const { app, BrowserWindow, components, ipcMain, globalShortcut, shell, Menu, Tray, nativeImage } = require('electron');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -13,8 +13,21 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 
 let mainWin = null;
 let ampWin = null;
-const ampOpts = { opacity: 1, onTop: true };
+const ampOpts = { opacity: 1, onTop: true, snap: true };
+const ampPosFile = () => path.join(app.getPath('userData'), 'amp-window.json');
 const boundsFile = () => path.join(app.getPath('userData'), 'window.json');
+
+/* ---------------- prefs needed before startup ---------------- */
+const prefsFile = () => path.join(app.getPath('userData'), 'prefs.json');
+let prefs = { closeToTray: true, startup: 'off', hwAccel: true };
+try { prefs = { ...prefs, ...JSON.parse(fs.readFileSync(prefsFile(), 'utf8')) }; } catch {}
+if (prefs.hwAccel === false) app.disableHardwareAcceleration(); // saves the GPU process (~100 MB)
+// Lighter Chromium: no hardware media-key handler (we use our own global shortcuts), capped disk cache.
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,SpareRendererForSitePerProcess');
+app.commandLine.appendSwitch('disk-cache-size', String(64 * 1024 * 1024));
+const startupMode = (process.argv.find(a => a.startsWith('--startup=')) || '').split('=')[1] || 'normal';
+let quitting = false;
+app.on('before-quit', () => { quitting = true; });
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => {
@@ -70,7 +83,9 @@ function createMain() {
     },
   });
   if (b.maximized) mainWin.maximize();
-  mainWin.once('ready-to-show', () => mainWin.show());
+  mainWin.once('ready-to-show', () => { if (startupMode === 'normal') mainWin.show(); });
+  // Close to tray: keep playing in the background instead of quitting.
+  mainWin.on('close', e => { if (prefs.closeToTray && tray && !quitting) { e.preventDefault(); mainWin.hide(); } });
   mainWin.on('resize', saveBounds);
   mainWin.on('move', saveBounds);
   mainWin.on('closed', () => { mainWin = null; app.quit(); });
@@ -96,6 +111,15 @@ function createMain() {
     win.setAlwaysOnTop(ampOpts.onTop, 'floating');
     win.setOpacity(ampOpts.opacity);
     win.setMenu(null);
+    // Reopen where you left it (if that spot is still on a screen).
+    try {
+      const { x, y } = JSON.parse(fs.readFileSync(ampPosFile(), 'utf8'));
+      const { screen } = require('electron');
+      const area = screen.getDisplayNearestPoint({ x, y }).workArea;
+      if (x >= area.x - 20 && y >= area.y - 20 && x < area.x + area.width - 40 && y < area.y + area.height - 40) win.setPosition(x, y);
+    } catch {}
+    let t;
+    win.on('moved', () => { clearTimeout(t); t = setTimeout(() => snapAmp(win), 60); });
     win.on('closed', () => { if (ampWin === win) ampWin = null; });
   });
   // Keep in-app navigation on our origin or Spotify's login pages.
@@ -143,7 +167,84 @@ ipcMain.on('main-visibility', (_e, show) => {
   if (show) { mainWin.show(); mainWin.focus(); } else mainWin.hide();
 });
 ipcMain.on('quit', () => app.quit());
+ipcMain.handle('startup-mode', () => startupMode);
+// Synced lyrics from LRCLIB (free, public). Fetched here so the page needs no extra permissions.
+ipcMain.handle('lyrics', async (_e, q = {}) => {
+  const { net } = require('electron');
+  const headers = { 'User-Agent': 'Amplite (https://github.com/larosa023/Amplite)' };
+  const get = async url => { const r = await net.fetch(url, { headers }); return r.ok ? r.json() : null; };
+  try {
+    const exact = await get('https://lrclib.net/api/get?' + new URLSearchParams({ track_name: q.track, artist_name: q.artist, album_name: q.album || '', duration: String(q.duration || '') }));
+    if (exact) return exact;
+    const list = await get('https://lrclib.net/api/search?' + new URLSearchParams({ track_name: q.track, artist_name: q.artist }));
+    if (!Array.isArray(list) || !list.length) return null;
+    // Prefer synced lyrics whose length matches the song.
+    list.sort((a, b) => (!!b.syncedLyrics - !!a.syncedLyrics) || Math.abs((a.duration || 0) - q.duration) - Math.abs((b.duration || 0) - q.duration));
+    return list[0];
+  } catch (e) { return { error: e.message }; }
+});
+ipcMain.on('prefs', (_e, p = {}) => {
+  prefs = { ...prefs, ...p };
+  try { fs.writeFileSync(prefsFile(), JSON.stringify(prefs)); } catch {}
+  if (app.isPackaged && process.platform === 'win32') {
+    try { app.setLoginItemSettings({ openAtLogin: prefs.startup !== 'off', args: prefs.startup !== 'off' ? [`--startup=${prefs.startup}`] : [] }); } catch {}
+  }
+});
+
+/* ---------------- tray ---------------- */
+let tray = null, now = { title: '', artist: '', paused: true };
+function showMain() { if (!mainWin) return; mainWin.show(); if (mainWin.isMinimized()) mainWin.restore(); mainWin.focus(); }
+function trayMenu() {
+  const send = cmd => mainWin?.webContents.send('media', cmd);
+  return Menu.buildFromTemplate([
+    { label: now.title ? `${now.title}${now.artist ? ' — ' + now.artist : ''}`.slice(0, 60) : 'Nothing playing', enabled: false },
+    { type: 'separator' },
+    { label: now.paused ? 'Play' : 'Pause', click: () => send('toggle') },
+    { label: 'Next', click: () => send('next') },
+    { label: 'Previous', click: () => send('prev') },
+    { type: 'separator' },
+    { label: 'Show Amplite', click: showMain },
+    { label: 'Mini amp', click: () => send('amp') },
+    { type: 'separator' },
+    { label: 'Quit Amplite', click: () => { quitting = true; app.quit(); } },
+  ]);
+}
+function createTray() {
+  try {
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')).resize({ width: 16, height: 16 });
+    tray = new Tray(icon);
+    tray.setToolTip('Amplite');
+    tray.setContextMenu(trayMenu());
+    tray.on('click', () => (mainWin?.isVisible() && !mainWin.isMinimized() ? mainWin.hide() : showMain()));
+  } catch (e) { console.warn('Tray unavailable', e); }
+}
+ipcMain.on('now-playing', (_e, n = {}) => {
+  now = { title: n.title || '', artist: n.artist || '', paused: n.paused !== false };
+  if (!tray) return;
+  tray.setToolTip(now.title ? `${now.paused ? '⏸' : '▶'} ${now.title} — ${now.artist}`.slice(0, 120) : 'Amplite');
+  tray.setContextMenu(trayMenu());
+});
+// Snap the mini amp to screen edges/corners when dropped within 24 px of them, and remember the spot.
+function snapAmp(win, corner) {
+  if (!win || win.isDestroyed()) return;
+  const { screen } = require('electron');
+  const b = win.getBounds(), area = screen.getDisplayMatching(b).workArea, T = 24;
+  let { x, y } = b;
+  if (corner) {
+    x = corner.includes('l') ? area.x : area.x + area.width - b.width;
+    y = corner.includes('t') ? area.y : area.y + area.height - b.height;
+  } else if (ampOpts.snap) {
+    if (Math.abs(x - area.x) < T) x = area.x;
+    if (Math.abs(area.x + area.width - (x + b.width)) < T) x = area.x + area.width - b.width;
+    if (Math.abs(y - area.y) < T) y = area.y;
+    if (Math.abs(area.y + area.height - (y + b.height)) < T) y = area.y + area.height - b.height;
+  }
+  if (x !== b.x || y !== b.y) win.setPosition(x, y);
+  try { fs.writeFileSync(ampPosFile(), JSON.stringify({ x, y })); } catch {}
+}
 ipcMain.on('amp-window', (_e, o = {}) => {
+  if (typeof o.snap === 'boolean') ampOpts.snap = o.snap;
+  if (o.corner && ampWin && !ampWin.isDestroyed()) snapAmp(ampWin, o.corner);
   if (typeof o.opacity === 'number') ampOpts.opacity = Math.max(0.3, Math.min(1, o.opacity));
   if (typeof o.onTop === 'boolean') ampOpts.onTop = o.onTop;
   if (ampWin && !ampWin.isDestroyed()) { ampWin.setOpacity(ampOpts.opacity); ampWin.setAlwaysOnTop(ampOpts.onTop, 'floating'); }
@@ -158,6 +259,7 @@ ipcMain.on('engine-start', (_e, opts) => { engine.configure(typeof opts === 'num
 ipcMain.on('engine-config', (_e, opts) => { if (engine.configure(opts || {})) engine.restart(); });
 ipcMain.on('engine-restart', (_e, opts) => engine.restart(opts || {}));
 ipcMain.on('engine-stop', () => engine.stop());
+ipcMain.on('eq-set', (_e, eq) => engine.setEq(eq));
 
 /* ---------------- official Spotify app (fallback playback) ---------------- */
 // Used when Spotify refuses the engine's audio keys for an account: Amplite starts the
@@ -241,6 +343,7 @@ app.whenReady().then(async () => {
     return app.quit();
   }
   createMain();
+  createTray();
   initUpdater();
 
   const send = cmd => mainWin?.webContents.send('media', cmd);

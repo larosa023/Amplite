@@ -49,6 +49,12 @@ class Engine {
   }
 
   get cacheDir() { return path.join(app.getPath('userData'), 'engine'); }
+  get eqFile() { return path.join(app.getPath('userData'), 'engine', 'eq.txt'); }
+  // Writes the EQ settings the patched engine re-reads live (see patches/librespot-amplite.patch).
+  setEq({ enabled = false, preamp = 0, gains = [] } = {}) {
+    const g = Array.from({ length: 10 }, (_, i) => Number(gains[i]) || 0);
+    try { fs.mkdirSync(path.dirname(this.eqFile), { recursive: true }); fs.writeFileSync(this.eqFile, `${enabled ? 1 : 0} ${Number(preamp) || 0} ${g.join(' ')}\n`); } catch (e) { this.log('eq write failed: ' + e.message); }
+  }
   get hasLogin() { return fs.existsSync(path.join(this.cacheDir, 'credentials.json')); }
 
   set(state, detail = '') {
@@ -90,7 +96,7 @@ class Engine {
     if (this.normalise) args.push('--enable-volume-normalisation');
     this.keyFails = 0; this.keyRefused = false; this.format = null; this.junk = 0;
     this.set('starting', this.hasLogin ? 'Connecting…' : 'Waiting for one-time approval');
-    const p = spawn(bin, args, { windowsHide: true, env: { ...process.env, RUST_LOG: 'info' } });
+    const p = spawn(bin, args, { windowsHide: true, env: { ...process.env, RUST_LOG: 'info', AMPLITE_EQ_FILE: this.eqFile } });
     this.proc = p;
     this.log(`--- start ${new Date().toISOString()} · ${path.basename(bin)} ${args.filter(a => !a.includes(path.sep)).join(' ')}`);
     const onLine = line => {

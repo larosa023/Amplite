@@ -7,12 +7,20 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Pins**: pin playlists, albums, artists or Liked Songs with the **Pin** button on their page or by right-clicking them. Pinned items sit at the top of the sidebar and first on Home. Drag to reorder, and open with `Ctrl+1` to `Ctrl+9`.
 - **Mini Amp**: click **AMP** (or press `M`) and Amplite shrinks into a small, always-on-top retro amp window. Close it to bring the full window back.
 - **Customizable amp** (Settings → Mini Amp): 8 skins plus fully custom colors, size, width, corners, font, glow, 6 visualizer styles, bar count, frame rate, album art, choose which parts to show, title scrolling, opacity and always-on-top.
+- **Custom accent color** on any theme (Settings → General).
+- **Queue panel** (`Q`) and **right-click → Add to queue** on any song.
+- **Synced lyrics** (`L`) from [LRCLIB](https://lrclib.net). Click a line to jump to it, or show the current line on the mini amp's display.
+- **10-band equalizer** with presets, in an EQ panel under the mini amp and in Settings → Audio (built-in engine).
+- **Filter, sort and shuffle** Liked Songs and playlists.
+- **System tray** with play/pause/skip, **close to tray**, and **start with Windows** (window, tray or mini amp).
+- **Mini amp snaps** to screen edges and corners and remembers where you put it.
+- **Fast startup**: your profile, playlists and Home appear instantly from the last session and refresh in the background. Pages start loading when you hover over them.
 - **Collapsible sidebar** (button at the top of the sidebar, or `Ctrl+B`) and a **Lite mode** that turns off effects for lower CPU/GPU use.
 - **Auto-updates**: Amplite checks GitHub Releases, downloads new versions in the background, and shows a restart button in the title bar. You can also use **Check for updates** in the account menu.
 - **Media keys** (play/pause, next, previous) work even when Amplite isn't focused.
 - Home (recently played and your top tracks), search, Liked Songs, playlists, albums and artists.
 - Plays music itself at **320 kbps** through a built-in audio engine, or acts as a remote for Spotify on your other devices.
-- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings · `Ctrl+1–9` pinned items.
+- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings · `Ctrl+1–9` pinned items · `Q` queue · `L` lyrics.
 
 ## Install
 
@@ -80,3 +88,4 @@ Every push to `main` builds the installer on GitHub Actions and publishes it as 
 | `preload.js` | Safe bridge between the shell and the UI |
 | `src/` | The UI: `index.html`, `styles.css`, `app.js` |
 | `build/` | Icons and the optional VMP signing hook |
+| `patches/` | Amplite's changes to librespot (Ogg-first formats, 10-band EQ) |
