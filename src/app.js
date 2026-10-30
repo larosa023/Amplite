@@ -1627,7 +1627,7 @@ function drawAmp() {
     if (c.scroll === 'static') { if (txt !== V.text) { V.text = txt; setText(A.marq, txt); } }
     else if (t - V.lastMarq > (SCROLL_MS[c.scroll] || 220)) {
       V.lastMarq = t;
-      const full = txt + '   ***   ';
+      const full = txt + '        ';
       if (full !== V.text) { V.text = full; V.off = 0; } else V.off = (V.off + 1) % full.length;
       setText(A.marq, full.slice(V.off) + full.slice(0, V.off));
     }
