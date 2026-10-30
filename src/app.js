@@ -1443,7 +1443,7 @@ function renderThemes() {
 const ampEl = $('#amp');
 const A = {
   time: $('#ampTime', ampEl), state: $('#ampState', ampEl), marq: $('#ampMarq', ampEl), viz: $('#ampViz', ampEl),
-  seek: $('#ampSeek', ampEl), vol: $('#ampVol', ampEl), dev: $('#ampDev', ampEl), art: $('#ampArt', ampEl),
+  seek: $('#ampSeek', ampEl), dur: $('#ampDur', ampEl), vol: $('#ampVol', ampEl), dev: $('#ampDev', ampEl), art: $('#ampArt', ampEl),
   shuf: $('[data-amp="shuffle"]', ampEl), rep: $('[data-amp="repeat"]', ampEl), eqBtn: $('[data-amp="eq"]', ampEl), eq: $('#ampEq', ampEl),
 };
 const ampOpen = () => !!S.ampWin || S.ampMode === 'inline';
@@ -1620,9 +1620,10 @@ function drawAmp() {
     setText(A.time, S.ampRemain && d ? '-' + fmt(d - p, true) : fmt(p, true));
     setText(A.state, !n ? '■' : n.paused ? '❚❚' : '▶');
     if (!S.ampSeeking) setRange(A.seek, d ? p / d : 0);
+    setText(A.dur, fmt(d));
   }
   if (c.marquee) {
-    const txt = c.lyricLine && S.lyricLine ? '♪ ' + S.lyricLine : n ? `${n.artists.map(a => a.name).join(', ')} - ${n.name} (${fmt(n.duration)})` : 'AMPLITE  ·  PICK A SONG TO START';
+    const txt = c.lyricLine && S.lyricLine ? '♪ ' + S.lyricLine : n ? `${n.artists.map(a => a.name).join(', ')} - ${n.name}` : 'AMPLITE  ·  PICK A SONG TO START';
     if (c.scroll === 'static') { if (txt !== V.text) { V.text = txt; setText(A.marq, txt); } }
     else if (t - V.lastMarq > (SCROLL_MS[c.scroll] || 220)) {
       V.lastMarq = t;

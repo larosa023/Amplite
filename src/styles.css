@@ -388,7 +388,9 @@ img { display:block; }
 .amp-range::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:9px; border-radius:2px; background:linear-gradient(180deg, var(--a-frame-hi), var(--a-frame)); border:1px solid var(--a-edge); }
 .amp-range::-moz-range-thumb { width:12px; height:9px; border-radius:2px; background:var(--a-frame-hi); border:1px solid var(--a-edge); }
 .amp-vol { margin-top:auto; }
-.amp-seek { margin:6px 0 5px; height:8px; }
+.amp-seekrow { display:flex; align-items:center; gap:6px; margin:6px 0 5px; }
+.amp-seek { flex:1; min-width:0; height:8px; }
+.amp-dur { font-size:9.5px; line-height:1; color:var(--a-text); font-variant-numeric:tabular-nums; text-shadow:0 0 calc(var(--a-glow) / 2) color-mix(in srgb, var(--a-text) 40%, transparent); }
 .amp-controls { display:flex; gap:2px; align-items:center; }
 .amp-controls button { height:19px; min-width:25px; padding:0 4px; display:grid; place-items:center; border-radius:2px; color:var(--a-btn);
   background:linear-gradient(180deg, var(--a-frame-hi), var(--a-frame)); border:1px solid var(--a-edge); box-shadow:inset 0 1px 0 #ffffff1f; }
@@ -402,11 +404,11 @@ img { display:block; }
 .amp-like.on { color:var(--a-text) !important; text-shadow:0 0 6px var(--a-text); }
 .amp-tog { font-size:8px; letter-spacing:.08em; color:var(--a-label) !important; }
 .amp-tog.on { color:var(--a-text) !important; text-shadow:0 0 6px var(--a-text); }
-.amp.no-marquee .amp-marquee, .amp.no-meta .amp-meta, .amp.no-vol .amp-vol, .amp.no-seek .amp-seek,
+.amp.no-marquee .amp-marquee, .amp.no-meta .amp-meta, .amp.no-vol .amp-vol, .amp.no-seek .amp-seekrow,
 .amp.no-controls .amp-controls, .amp.no-toggles .amp-tog, .amp.no-toggles .amp-sep, .amp.no-title .amp-title { display:none; }
 .amp.no-title .amp-body { padding-top:6px; }
 .amp.no-seek .amp-controls { margin-top:6px; }
-.amp.no-controls .amp-seek { margin-bottom:0; }
+.amp.no-controls .amp-seekrow { margin-bottom:0; }
 .amp.no-marquee.no-meta.no-vol .amp-right { display:none; }
 .amp-host { position:fixed; inset:0; display:grid; place-content:center; justify-items:center; gap:56px;
   background:radial-gradient(700px 400px at 50% 40%, color-mix(in srgb, var(--accent) 18%, transparent), transparent), var(--bg); }

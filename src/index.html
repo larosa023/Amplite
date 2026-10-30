@@ -138,7 +138,10 @@
             <input id="ampVol" class="amp-range amp-vol" type="range" min="0" max="100" aria-label="Volume">
           </div>
         </div>
-        <input id="ampSeek" class="amp-range amp-seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
+        <div class="amp-seekrow">
+          <input id="ampSeek" class="amp-range amp-seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
+          <span id="ampDur" class="amp-dur" title="Song length">0:00</span>
+        </div>
         <div class="amp-controls">
           <button data-amp="prev" data-i="prev" title="Previous"></button>
           <button data-amp="play" data-i="play" title="Play"></button>
