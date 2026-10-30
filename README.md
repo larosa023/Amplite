@@ -8,6 +8,7 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Mini Amp**: click **AMP** (or press `M`) and Amplite shrinks into a small, always-on-top retro amp window. Close it to bring the full window back.
 - **Customizable amp** (Settings → Mini Amp): 8 skins plus fully custom colors, size, width, corners, font, glow, 6 visualizer styles, bar count, frame rate, album art, choose which parts to show, title scrolling, opacity and always-on-top.
 - **Custom accent color** on any theme (Settings → General).
+- **Edit your playlists**: on any playlist you own or collaborate on, click **Add songs** to search (or pick from recently played) and add with one click. Hover a song and click **⊖** to remove it, with **Undo**. Right-click any song anywhere → **Add to playlist…**
 - **Queue panel** (`Q`) and **right-click → Add to queue** on any song.
 - **Synced lyrics** (`L`) from [LRCLIB](https://lrclib.net). Click a line to jump to it, or show the current line on the mini amp's display.
 - **10-band equalizer** with presets, in an EQ panel under the mini amp and in Settings → Audio (built-in engine).

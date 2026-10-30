@@ -11,6 +11,7 @@ const SCOPES = [
   'user-read-playback-state', 'user-modify-playback-state', 'user-read-currently-playing',
   'user-library-read', 'user-library-modify',
   'playlist-read-private', 'playlist-read-collaborative',
+  'playlist-modify-public', 'playlist-modify-private',
   'user-top-read', 'user-read-recently-played',
 ].join(' ');
 
@@ -101,6 +102,8 @@ const ICONS = {
   queue: '<path d="M3 6h13M3 12h13M3 18h9M17 15v6l5-3z"/>',
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7"/>', listadd: '<path d="M3 6h12M3 12h12M3 18h7M18 13v8M14 17h8"/>',
 };
 const svg = n => {
   const v = ICONS[n];
@@ -115,9 +118,16 @@ const setIcon = (el, n) => {
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--accent)"/><g fill="var(--on-accent)"><rect x="7.5" y="14" width="3.2" height="10" rx="1.6"/><rect x="14.4" y="8" width="3.2" height="16" rx="1.6"/><rect x="21.3" y="11" width="3.2" height="13" rx="1.6"/></g></svg>`;
 
 let toastT;
-function toast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3600);
+// toast('Saved') or toast('Removed', { label: 'Undo', run: fn }) for a clickable action.
+function toast(msg, action) {
+  const t = $('#toast'); t.textContent = msg;
+  if (action) {
+    const b = document.createElement('button'); b.className = 'toast-btn'; b.textContent = action.label;
+    b.onclick = e => { e.stopPropagation(); t.classList.remove('show'); action.run(); };
+    t.append(b);
+  }
+  t.classList.toggle('has-action', !!action); t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), action ? 7000 : 3600);
 }
 
 /* ---------------- auth (PKCE) ---------------- */
@@ -142,7 +152,7 @@ async function tokenRequest(params) {
   const t = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(t.error_description || `Spotify login failed (${r.status})`);
   const prev = store.get('token') || {};
-  const tok = { access_token: t.access_token, refresh_token: t.refresh_token || prev.refresh_token, expires_at: Date.now() + (t.expires_in - 60) * 1000 };
+  const tok = { access_token: t.access_token, refresh_token: t.refresh_token || prev.refresh_token, expires_at: Date.now() + (t.expires_in - 60) * 1000, scope: t.scope || prev.scope || '' };
   store.set('token', tok);
   return tok;
 }
@@ -786,7 +796,7 @@ async function navigate(name, arg = '', push = true) {
   $('#fwdBtn').disabled = !S.fwd.length;
   const el = $('#view'), tok = ++navToken, alive = () => tok === navToken;
   if (push) el.scrollTop = 0;
-  S.lists = []; S.hero = null;
+  S.lists = []; S.hero = null; S.pl = null; closeAddSongs();
   el.innerHTML = '<div class="loading"><span></span><span></span><span></span></div>';
   try { await VIEWS[name](el, arg, alive); }
   catch (e) { if (alive()) el.innerHTML = `<div class="empty"><h2>Couldn't load that</h2><p>${esc(e.message)}</p></div>`; }
@@ -803,23 +813,24 @@ function card({ kind, id, uri, title, sub, image, round }) {
     <div class="card-title">${esc(title)}</div><div class="card-sub">${esc(sub || '')}</div></div>`;
 }
 
-function trackRows(tracks, { showAlbum, showArt }, offset = 0) {
+function trackRows(tracks, { showAlbum, showArt, removable }, offset = 0) {
+  const rm = removable ? `<button class="trm" data-rm title="Remove from this playlist">${svg('minus')}</button>` : '';
   return tracks.map((t, j) => { const i = j + offset; return `<div class="trow ${t.playable ? '' : 'dim'}" data-idx="${i}" data-uri="${esc(t.uri)}" data-q="${esc(`${t.name} ${t.artists.map(a => a.name).join(' ')} ${t.album?.name || ''}`.toLowerCase())}">
       <div class="tnum"><span>${i + 1}</span>${svg('play')}</div>
       <div class="tmain">${showArt && t.album?.image ? `<img src="${esc(t.album.image)}" alt="" loading="lazy" decoding="async">` : ''}
         <div class="ttext"><div class="tname">${esc(t.name)}</div><div class="tartist">${artistLinks(t.artists)}</div></div></div>
       ${showAlbum ? `<div class="talbum">${t.album?.id ? `<a data-open="album:${esc(t.album.id)}">${esc(t.album.name)}</a>` : esc(t.album?.name || '')}</div>` : ''}
-      <div class="tdur">${fmt(t.duration)}</div></div>`; }).join('');
+      <div class="tdur">${rm}${fmt(t.duration)}</div></div>`; }).join('');
 }
 // Long lists: render the first rows immediately and the rest in small chunks between frames,
 // so opening a 2,000-song library never blocks the window.
 const FIRST_ROWS = 150, CHUNK_ROWS = 250;
-function trackTable(tracks, { context = null, showAlbum = true, showArt = true } = {}) {
-  const li = S.lists.push({ tracks, orig: tracks, context, showAlbum, showArt }) - 1;
+function trackTable(tracks, { context = null, showAlbum = true, showArt = true, removable = false } = {}) {
+  const li = S.lists.push({ tracks, orig: tracks, context, showAlbum, showArt, removable }) - 1;
   if (tracks.length > FIRST_ROWS) setTimeout(() => fillRows(li), 0);
   return `<div class="tracks ${showAlbum ? '' : 'no-album'}" data-list="${li}">
     <div class="thead"><span>#</span><span>Title</span>${showAlbum ? '<span>Album</span>' : ''}<span class="tdur">${svg('clock')}</span></div>
-    <div class="tbody">${trackRows(tracks.slice(0, FIRST_ROWS), { showAlbum, showArt })}</div>
+    <div class="tbody">${trackRows(tracks.slice(0, FIRST_ROWS), S.lists[li])}</div>
   </div>`;
 }
 function fillRows(li, from = FIRST_ROWS) {
@@ -888,14 +899,14 @@ function initListTools() {
   sel.onchange = () => applyListSort(sel.value);
 }
 
-function hero({ image, art, round, kind, title, desc, meta, pin, tools }) {
+function hero({ image, art, round, kind, title, desc, meta, pin, tools, extra }) {
   S.heroPin = pin || null;
   return `<header class="hero">
     ${art || (image ? `<img class="hero-art ${round ? 'round' : ''}" src="${esc(image)}" alt="">` : `<div class="hero-art ph">${svg('music')}</div>`)}
     <div class="hero-text"><div class="hero-kind">${esc(kind)}</div><h1>${esc(title)}</h1>
       ${desc ? `<p class="hero-desc">${esc(desc)}</p>` : ''}<div class="hero-meta">${meta || ''} <span id="listCount" class="muted"></span></div></div>
   </header><div class="actions pad"><button class="big-play" data-hero-play title="Play">${svg('play')}</button>
-    ${tools ? listToolsHTML() : ''}
+    ${tools ? listToolsHTML() : ''}${extra || ''}
     ${pin ? `<button class="pin-btn ${isPinned(pin) ? 'on' : ''}" data-pin-toggle title="${isPinned(pin) ? 'Unpin' : 'Pin to sidebar'}">${svg('pin')}<span>${isPinned(pin) ? 'Pinned' : 'Pin'}</span></button>` : ''}</div>`;
 }
 
@@ -1001,12 +1012,16 @@ async function viewPlaylist(el, id, alive) {
   }
   if (!alive()) return;
   S.hero = { context: pl.uri };
+  const editable = canEdit(pl) && !note;
+  S.pl = { id: pl.id, uri: pl.uri, name: pl.name, editable };
   const total = pl.items?.total ?? pl.tracks?.total ?? tracks.length;
   el.innerHTML = hero({
     image: img(pl.images), kind: pl.public === false ? 'Private playlist' : 'Playlist', title: pl.name, tools: tracks.length > 0,
     pin: { type: 'playlist', id: pl.id, uri: pl.uri, name: pl.name, image: img(pl.images, 64) },
-    desc: stripHtml(pl.description), meta: `${esc(pl.owner?.display_name || '')} · ${total} songs`,
-  }) + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri }) : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`;
+    desc: stripHtml(pl.description), meta: `${esc(pl.owner?.display_name || '')} · <span id="plCount">${total}</span> songs`,
+    extra: editable ? `<button class="pin-btn" data-add-songs title="Add songs to this playlist">${svg('plus')}<span>Add songs</span></button>` : '',
+  }) + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri, removable: editable })
+    : editable ? `<div class="empty small"><p>This playlist is empty.</p><button class="pill-btn" data-add-songs>${svg('plus')} Add songs</button></div>` : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`;
   initListTools();
 }
 
@@ -1119,6 +1134,175 @@ async function addToQueue(uri) {
   } catch (e) { toast(e.status === 404 ? 'Start playing something first, then add to the queue.' : e.message); }
 }
 
+/* ---------------- editing playlists ---------------- */
+// Only playlists you own or collaborate on can be changed.
+const canEdit = p => !!p && !!S.me && (p.owner?.id === S.me.id || p.collaborative === true);
+const editablePlaylists = () => S.playlists.filter(p => canEdit(p));
+// Sessions signed in before playlist editing existed don't have permission yet: one quick re-login fixes it.
+function needsEditPermission(e) {
+  if (e.status !== 401 && e.status !== 403) return false;
+  const scope = store.get('token')?.scope || '';
+  if (scope.includes('playlist-modify')) return false; // permission is there; it's a real "not allowed"
+  toast('Amplite needs permission to edit your playlists.', { label: 'Allow', run: login });
+  return true;
+}
+function playlistChanged(id) {
+  purgeCache(new RegExp(`/playlists/${id}(/|\\?|$)`));
+  purgeCache(/\/me\/playlists/);
+}
+async function addToPlaylist(pid, uris, position) {
+  await api(`/playlists/${pid}/items`, { method: 'POST', body: position == null ? { uris } : { uris, position } });
+  playlistChanged(pid);
+}
+async function removeFromPlaylist(pid, uris) {
+  try { await api(`/playlists/${pid}/items`, { method: 'DELETE', body: { items: uris.map(uri => ({ uri })) } }); }
+  catch (e) {
+    if (e.status !== 400) throw e; // older API shape, just in case
+    await api(`/playlists/${pid}/tracks`, { method: 'DELETE', body: { tracks: uris.map(uri => ({ uri })) } });
+  }
+  playlistChanged(pid);
+}
+const setPlCount = n => { const c = $('#plCount'); if (c) c.textContent = n; };
+
+// Re-number the rows of the page's main list after one is added/removed, without re-rendering it
+// (keeps scroll position), and carry on filling rows that haven't been drawn yet.
+function renumberList() {
+  const L = S.lists[0], body = $('.tracks[data-list="0"] .tbody'); if (!L || !body) return;
+  const rows = body.querySelectorAll('.trow');
+  rows.forEach((r, i) => { r.dataset.idx = i; const n = r.querySelector('.tnum span'); if (n) n.textContent = i + 1; });
+  if (rows.length < L.tracks.length) { L.gen = (L.gen || 0) + 1; fillRows(0, rows.length); }
+  applyListFilter(); markPlaying();
+}
+
+async function removeRow(row) {
+  const L = S.lists[+row.closest('.tracks').dataset.list], pl = S.pl;
+  const t = L?.tracks[+row.dataset.idx]; if (!t || !pl?.editable) return;
+  // Spotify removes every copy of the song, so do the same on screen.
+  const origPos = L.orig.findIndex(x => x.uri === t.uri);
+  const copies = L.orig.filter(x => x.uri === t.uri).length;
+  const keep = x => x.uri !== t.uri;
+  const before = { orig: L.orig, tracks: L.tracks };
+  L.orig = L.orig.filter(keep); L.tracks = L.tracks === before.orig ? L.orig : L.tracks.filter(keep);
+  row.closest('.tbody').querySelectorAll('.trow').forEach(r => { if (r.dataset.uri === t.uri) r.remove(); });
+  renumberList(); setPlCount(L.orig.length);
+  try {
+    await removeFromPlaylist(pl.id, [t.uri]);
+    toast(`Removed “${t.name}”`, copies === 1 && S.pl?.id === pl.id ? { label: 'Undo', run: () => undoRemove(pl, t, origPos) } : null);
+  } catch (e) {
+    if (S.pl?.id === pl.id) { L.orig = before.orig; L.tracks = before.tracks; navigate('playlist', pl.id, false); }
+    if (!needsEditPermission(e)) toast(`Couldn’t remove it: ${e.message}`);
+  }
+}
+async function undoRemove(pl, t, pos) {
+  try {
+    await addToPlaylist(pl.id, [t.uri], pos);
+    if (S.pl?.id === pl.id) navigate('playlist', pl.id, false);
+    toast('Restored');
+  } catch (e) { toast(`Couldn’t restore it: ${e.message}`); }
+}
+
+// After adding from the "Add songs" panel, show the song at the bottom of the open playlist right away.
+function appendToOpenList(t) {
+  const L = S.lists[0], body = $('.tracks[data-list="0"] .tbody');
+  if (!L || !body) return false;
+  const sorted = L.tracks !== L.orig;
+  L.orig = [...L.orig, t];
+  L.tracks = sorted ? [...L.tracks, t] : L.orig;
+  if (body.querySelectorAll('.trow').length === L.tracks.length - 1) body.insertAdjacentHTML('beforeend', trackRows([t], L, L.tracks.length - 1));
+  renumberList(); setPlCount(L.orig.length);
+  return true;
+}
+
+// Right-click → Add to playlist: a second menu listing the playlists you can edit.
+function pickPlaylist(e, t) {
+  const lists = editablePlaylists();
+  if (!lists.length) return toast('You don’t have any playlists of your own yet.');
+  // Next tick: the click that chose "Add to playlist…" would otherwise close this menu straight away.
+  setTimeout(() => showCtx(e, lists.slice(0, 40).map(p => ({
+    icon: S.pl?.id === p.id ? 'check' : 'music', label: p.name,
+    run: async () => {
+      try {
+        await addToPlaylist(p.id, [t.uri]);
+        toast(`Added to ${p.name}`);
+        if (S.pl?.id === p.id && S.pl.editable && !appendToOpenList(t)) navigate('playlist', p.id, false);
+      } catch (err) { if (!needsEditPermission(err)) toast(`Couldn’t add it: ${err.message}`); }
+    },
+  }))), 0);
+}
+
+// ---- "Add songs" panel (search + recently played) ----
+const AS = { open: false, q: '', offset: 0, results: [], added: new Set(), seq: 0 };
+function openAddSongs() {
+  const pl = S.pl; if (!pl?.editable) return;
+  AS.open = true; AS.q = ''; AS.offset = 0; AS.results = [];
+  AS.added = new Set((S.lists[0]?.orig || []).map(t => t.uri));
+  $('#addTitle').textContent = `Add songs to ${pl.name}`;
+  $('#addSongs').classList.remove('hidden');
+  const inp = $('#addQuery'); inp.value = ''; setTimeout(() => inp.focus(), 0);
+  addSuggestions();
+}
+function closeAddSongs() { if (!AS.open) return; AS.open = false; AS.seq++; $('#addSongs')?.classList.add('hidden'); }
+const addRow = (t, i) => {
+  const has = AS.added.has(t.uri);
+  return `<div class="as-row" data-as="${i}">
+    ${t.album?.image ? `<img src="${esc(t.album.image)}" alt="" loading="lazy">` : `<div class="as-ph">${svg('music')}</div>`}
+    <div class="as-text"><div class="tname">${esc(t.name)}</div><div class="tartist">${esc(t.artists.map(a => a.name).join(', '))}</div></div>
+    <span class="as-dur">${fmt(t.duration)}</span>
+    <button class="as-add ${has ? 'on' : ''}" data-as-add="${i}" title="${has ? 'Already in this playlist' : 'Add to playlist'}">${svg(has ? 'check' : 'plus')}</button></div>`;
+};
+function renderAddResults(title, more) {
+  const body = $('#addBody');
+  body.innerHTML = AS.results.length
+    ? `<h4>${esc(title)}</h4>${AS.results.map(addRow).join('')}${more ? '<button class="pill-btn as-more" data-as-more>More results</button>' : ''}`
+    : `<p class="muted small-note">${AS.q ? 'No songs found.' : 'Search for songs to add.'}</p>`;
+}
+async function addSuggestions() {
+  const seq = ++AS.seq;
+  $('#addBody').innerHTML = '<div class="loading small"><span></span><span></span><span></span></div>';
+  try {
+    const d = await api('/me/player/recently-played', { query: { limit: 50 } });
+    if (seq !== AS.seq) return;
+    const seen = new Set();
+    AS.results = (d?.items || []).map(i => norm(i.track)).filter(t => t && !seen.has(t.uri) && seen.add(t.uri)).slice(0, 30);
+  } catch { if (seq !== AS.seq) return; AS.results = []; }
+  renderAddResults('Recently played', false);
+}
+async function addSearch(more = false) {
+  const q = AS.q; if (!q) return addSuggestions();
+  const seq = ++AS.seq;
+  if (!more) { AS.offset = 0; AS.results = []; $('#addBody').innerHTML = '<div class="loading small"><span></span><span></span><span></span></div>'; }
+  try {
+    const d = await api('/search', { query: { q, type: 'track', limit: 10, offset: AS.offset } });
+    if (seq !== AS.seq) return;
+    const items = (d.tracks?.items || []).map(norm).filter(Boolean);
+    AS.results = [...AS.results, ...items]; AS.offset += 10;
+    renderAddResults('Songs', items.length === 10 && AS.offset < 100);
+  } catch (e) { if (seq === AS.seq) $('#addBody').innerHTML = `<p class="muted small-note">${esc(e.message)}</p>`; }
+}
+async function addFromPanel(btn) {
+  const t = AS.results[+btn.dataset.asAdd], pl = S.pl; if (!t || !pl?.editable || btn.disabled) return;
+  if (AS.added.has(t.uri)) return toast('Already in this playlist');
+  btn.disabled = true;
+  try {
+    await addToPlaylist(pl.id, [t.uri]);
+    AS.added.add(t.uri);
+    btn.classList.add('on'); btn.innerHTML = svg('check'); btn.title = 'Added';
+    if (!appendToOpenList(t)) { closeAddSongs(); navigate('playlist', pl.id, false); }
+  } catch (e) { if (!needsEditPermission(e)) toast(`Couldn’t add it: ${e.message}`); }
+  btn.disabled = false;
+}
+function bindAddSongs() {
+  const m = $('#addSongs'); if (!m) return;
+  let t;
+  $('#addQuery').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { AS.q = e.target.value.trim(); addSearch(); }, 250); });
+  m.addEventListener('click', e => {
+    if (e.target === m || e.target.closest('[data-close-add]')) return closeAddSongs();
+    const b = e.target.closest('[data-as-add]'); if (b) return addFromPanel(b);
+    if (e.target.closest('[data-as-more]')) return addSearch(true);
+  });
+  m.addEventListener('dblclick', e => { const r = e.target.closest('[data-as]'); if (r && !e.target.closest('button')) { const t = AS.results[+r.dataset.as]; if (t) playUris([t.uri]); } });
+}
+
 // ---- lyrics (LRCLIB) ----
 function parseLrc(text) {
   const out = [];
@@ -1211,8 +1395,10 @@ function bindCtx() {
       const items = [
         { icon: 'play', label: 'Play', run: () => playRow(row) },
         { icon: 'queue', label: 'Add to queue', run: () => addToQueue(t.uri) },
-        '-',
+        { icon: 'listadd', label: 'Add to playlist…', run: () => pickPlaylist(e, t) },
       ];
+      if (L.removable && S.pl?.editable) items.push({ icon: 'minus', label: 'Remove from this playlist', run: () => removeRow(row) });
+      items.push('-');
       if (t.album?.id) items.push({ icon: 'disc', label: 'Go to album', run: () => navigate('album', t.album.id) });
       if (t.artists?.[0]?.id) items.push({ icon: 'user', label: `Go to ${t.artists[0].name}`, run: () => navigate('artist', t.artists[0].id) });
       return showCtx(e, items);
@@ -1499,6 +1685,7 @@ function drawAmp() {
 /* ---------------- events ---------------- */
 function onKey(e) {
   const tag = e.target?.tagName;
+  if (e.key === 'Escape' && AS.open) { closeAddSongs(); return; }
   if ((tag === 'INPUT' && e.target.type !== 'range') || tag === 'TEXTAREA') return;
   if (e.key === 'Escape' && !$('#settings').classList.contains('hidden')) { closeSettings(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleSidebar(); return; }
@@ -1559,6 +1746,9 @@ function bind() {
     if (e.target.closest('[data-hero-play]')) { playHero(); return; }
     if (e.target.closest('[data-pin-toggle]')) { togglePin(S.heroPin); return; }
     if (e.target.closest('[data-hero-shuffle]')) { shufflePlay(); return; }
+    if (e.target.closest('[data-add-songs]')) { openAddSongs(); return; }
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { e.stopPropagation(); removeRow(rm.closest('.trow')); return; }
     const num = e.target.closest('.tnum');
     if (num) { playRow(num.closest('.trow')); return; }
     const open = e.target.closest('[data-open]');
@@ -1566,7 +1756,7 @@ function bind() {
   });
   document.addEventListener('dblclick', e => {
     const row = e.target.closest('.trow');
-    if (row && !e.target.closest('a')) { getSelection()?.removeAllRanges(); playRow(row); }
+    if (row && !e.target.closest('a, button')) { getSelection()?.removeAllRanges(); playRow(row); }
   });
   document.addEventListener('keydown', onKey);
 
@@ -1969,7 +2159,7 @@ async function boot() {
 
   updatePlayerUI();
   if (S.me.product && S.me.product !== 'premium') toast('Heads up: Spotify only allows playback in Amplite on Premium accounts. You can still browse.');
-  renderPins(); bindPins(); bindCtx(); bindDrawer();
+  renderPins(); bindPins(); bindCtx(); bindDrawer(); bindAddSongs();
   await loadPlaylists();
   navigate('home');
   if (IS_APP) initEngine(); else initSDK();
