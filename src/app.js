@@ -1,7 +1,11 @@
 // Amplite — a lightweight Spotify player
 // Pure ES modules, no build step. Auth uses PKCE, so only the public Client ID lives here.
 
-const CLIENT_ID = '8d242b5e87d1482ea0ce0978b9d2cf83';
+// The built-in Spotify app. Anyone can use their own instead (login screen → "Use your own Spotify app"),
+// so they don't have to be added to this app's 5-user list.
+const DEFAULT_CLIENT_ID = '8d242b5e87d1482ea0ce0978b9d2cf83';
+const clientId = () => store.get('clientId') || DEFAULT_CLIENT_ID;
+const ownClientId = () => !!store.get('clientId');
 const IS_APP = !!window.amplite; // running inside the Amplite desktop app
 const HOME_URI = location.origin + location.pathname.replace(/(index\.html|callback)$/, '');
 // Desktop app: Spotify's recommended loopback form, e.g. http://127.0.0.1:43821/callback
@@ -138,7 +142,7 @@ async function login() {
   const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
   store.set('verifier', verifier);
   location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
-    client_id: CLIENT_ID, response_type: 'code', redirect_uri: REDIRECT_URI,
+    client_id: clientId(), response_type: 'code', redirect_uri: REDIRECT_URI,
     scope: SCOPES, code_challenge_method: 'S256', code_challenge: challenge,
   });
 }
@@ -147,7 +151,7 @@ async function tokenRequest(params) {
   const r = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: CLIENT_ID, ...params }),
+    body: new URLSearchParams({ client_id: clientId(), ...params }),
   });
   const t = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(t.error_description || `Spotify login failed (${r.status})`);
@@ -1703,6 +1707,7 @@ function onKey(e) {
 
 function bind() {
   $('#loginBtn').onclick = login;
+  bindLoginSetup();
   $('#sideToggle').onclick = toggleSidebar;
   $('#settingsBtn').onclick = e => { e.stopPropagation(); openSettings(); };
   $('#settingsMenuBtn').onclick = e => { e.stopPropagation(); openSettings(); };
@@ -1938,6 +1943,7 @@ function settingsHTML() {
         <div class="set-row"><div class="lbl">Re-link audio engine<small>Signs the engine in again through your browser. Make sure the browser is logged into your own Spotify account.</small></div><button class="btn ctl" id="engRelink">Re-link</button></div>
         <div class="set-row"><div class="lbl">Copy diagnostics<small>Version, account type, devices and recent engine log (no passwords or tokens)</small></div><button class="btn ctl" id="engDiag">Copy</button></div>`),
     about: `<div class="about-logo"><span class="logo" data-logo></span><div><b>Amplite</b><span class="muted" id="aboutVer"></span></div></div>`
+      + grp('Spotify app', `<div class="set-row"><div class="lbl">${ownClientId() ? `Your own app (…${esc(clientId().slice(-6))})` : 'Built-in app'}<small>The Spotify developer app Amplite signs in through. Use your own so you don’t need to be on anyone else’s user list.</small></div><button class="btn ctl" id="cidChange">Change</button></div>`)
       + (IS_APP ? grp('Updates', `<div class="set-row"><div class="lbl">Check for updates<small>Amplite also checks automatically</small></div><button class="btn ctl" id="aboutUpd">Check now</button></div>`) : '')
       + grp('Keyboard shortcuts', [['Space', 'Play / pause'], ['Ctrl + ← / →', 'Previous / next'], ['M', 'Mini amp'], ['/', 'Search'], ['Ctrl + B', 'Collapse sidebar'], ['Ctrl + ,', 'Settings'], ['Esc', 'Close settings']]
         .map(([k, t]) => `<div class="set-row"><div class="lbl">${t}</div><kbd>${k}</kbd></div>`).join('')),
@@ -2025,6 +2031,7 @@ function bindSettings(root) {
     if (e.target.closest('#engRestart')) { window.amplite.engineRestart(); toast('Restarting audio engine…'); return; }
     if (e.target.closest('#engRelink')) { window.amplite.engineRestart({ forget: true }); toast('Re-linking — approve Amplite in your browser.'); return; }
     if (e.target.closest('#aboutUpd')) { $('#updBtn').click(); return; }
+    if (e.target.closest('#cidChange')) { store.set('openSetup', true); logout(); return; }
     if (e.target.closest('#engDiag')) { copyDiagnostics(); return; }
     if (e.target.closest('#engRetry')) { store.del(refusedKey()); store.del(webKey()); S.lastMode = playMode(); window.amplite.engineRestart(); renderEngine(); updatePlayerUI(); toast('Trying the built-in engine again…'); }
   });
@@ -2116,11 +2123,39 @@ function schedulePoll() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (S.markDirty) markPlaying(); poll(); schedulePoll(); startViz(); } });
 
 /* ---------------- boot ---------------- */
-function showLogin(err) {
+function showLogin(err, openSetup) {
   $('#app').classList.add('hidden');
   $('#login').classList.remove('hidden');
   $('#redirectUri').textContent = REDIRECT_URI;
+  const own = ownClientId(), id = clientId();
+  $('#loginUsing').textContent = own ? `Using your Spotify app (…${id.slice(-6)})` : '';
+  $('#cidInput').value = own ? id : '';
+  $('#cidReset').classList.toggle('hidden', !own);
+  if (openSetup || store.get('openSetup')) { store.del('openSetup'); $('#ownApp').open = true; }
   if (err) { $('#loginErr').textContent = err; $('#loginErr').classList.remove('hidden'); }
+}
+function bindLoginSetup() {
+  $('#copyRedirect').onclick = async () => {
+    try { await navigator.clipboard.writeText(REDIRECT_URI); $('#copyRedirect').textContent = 'Copied'; setTimeout(() => { $('#copyRedirect').textContent = 'Copy'; }, 1500); } catch {}
+  };
+  $('#cidForm').onsubmit = e => {
+    e.preventDefault();
+    const raw = $('#cidInput').value.trim(), err = $('#cidErr');
+    // Client IDs are 32 hex characters. Catch the usual mix-up: pasting the Client *secret* looks the same, so say so.
+    if (!/^[0-9a-f]{32}$/i.test(raw)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, shown at the top of your app’s page on the dashboard.'; err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    switchClientId(raw.toLowerCase());
+    login();
+  };
+  $('#cidReset').onclick = () => { switchClientId(null); showLogin(); };
+}
+// A login belongs to one Spotify app, so switching apps signs out first.
+function switchClientId(id) {
+  if ((id || null) === (store.get('clientId') || null)) return;
+  store.del('token');
+  try { Object.keys(localStorage).filter(k => k.startsWith('amplite:swr:')).forEach(k => localStorage.removeItem(k)); } catch {}
+  apiCache.clear();
+  if (id) store.set('clientId', id); else store.del('clientId');
 }
 
 async function boot() {
@@ -2148,7 +2183,12 @@ async function boot() {
 
   try { S.me = await api('/me'); }
   catch (e) {
-    if (e.status === 403) return showLogin('Spotify blocked this account. In Development Mode the app owner needs Premium, and every user must be added under User Management in the dashboard.');
+    if (e.status === 403) {
+      store.del('token');
+      return showLogin(ownClientId()
+        ? 'Spotify blocked this account. Check that your email is added under User Management in your app on the developer dashboard, and that you have Premium.'
+        : 'This Spotify account isn’t on the built-in app’s user list. Set up your own Spotify app below (free, about 5 minutes) and you’re in.', true);
+    }
     store.del('token');
     return showLogin(e.message === 'Not logged in' ? '' : e.message);
   }

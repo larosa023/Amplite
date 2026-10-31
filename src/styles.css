@@ -133,7 +133,7 @@ img { display:block; }
 .logo.xl { width:72px; height:72px; }
 
 /* ============ Login ============ */
-.login { position:fixed; inset:0; display:grid; place-items:center; padding:24px;
+.login { position:fixed; inset:0; display:grid; place-items:center; padding:24px; overflow-y:auto;
   background:radial-gradient(900px 500px at 50% -10%, color-mix(in srgb, var(--accent) 30%, transparent), transparent), var(--bg); }
 .login-card { width:min(420px, 100%); text-align:center; display:flex; flex-direction:column; align-items:center; gap:14px; }
 .login-card h1 { font-size:44px; font-weight:800; letter-spacing:-.03em; }
@@ -651,3 +651,18 @@ kbd { white-space:nowrap; }
 .toast.has-action { pointer-events:auto; display:flex; align-items:center; gap:14px; }
 .toast-btn { color:var(--accent); font-weight:800; font-size:13px; padding:2px 4px; filter:brightness(.85); }
 .toast-btn:hover { text-decoration:underline; }
+
+/* ---- own Spotify app (Client ID) setup on the login screen ---- */
+.login-using { font-size:12px; color:var(--muted); margin-top:-6px; }
+.login-using:empty { display:none; }
+.login-help a { color:var(--accent); }
+.setup-steps { margin:10px 0 0 18px; display:flex; flex-direction:column; gap:9px; line-height:1.45; }
+.setup-steps b { color:var(--text); }
+.copy-line { display:flex; gap:6px; align-items:center; margin-top:6px; }
+.copy-line code { flex:1; margin-top:0 !important; }
+.cid-row { display:flex; gap:8px; margin-top:10px; }
+.cid-row input { flex:1; min-width:0; height:36px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); padding:0 10px; font:12.5px var(--font-mono); outline:none; }
+.cid-row input:focus { border-color:var(--accent); }
+.link-btn { margin-top:10px; color:var(--muted); font-size:12px; text-decoration:underline; }
+.link-btn:hover { color:var(--text); }
+#cidErr { margin-top:8px; }

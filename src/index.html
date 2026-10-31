@@ -19,11 +19,23 @@
       <p class="tag">A lightweight Spotify player with themes and a pocket-sized amp.</p>
       <button id="loginBtn" class="login-btn">Log in with Spotify</button>
       <p id="loginErr" class="login-err hidden"></p>
-      <details class="login-help">
-        <summary>First-time setup</summary>
-        <p>In your Spotify developer dashboard, add this exact Redirect URI:</p>
-        <code id="redirectUri"></code>
-        <p id="setupNote">Playback needs Spotify Premium. Also add your Spotify email under User Management.</p>
+      <p id="loginUsing" class="login-using"></p>
+      <details class="login-help" id="ownApp">
+        <summary>Use your own Spotify app</summary>
+        <p>Run Amplite on a free Spotify developer app of your own, so you don't need to be added to anyone else's. About 5 minutes, once. Needs Spotify Premium.</p>
+        <ol class="setup-steps">
+          <li>Open <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a>, log in with your Spotify account and click <b>Create app</b>. Any name and description is fine.</li>
+          <li>Under <b>Redirect URIs</b> add exactly this, tick <b>Web API</b> and <b>Web Playback SDK</b>, then save:
+            <span class="copy-line"><code id="redirectUri"></code><button type="button" class="btn ctl" id="copyRedirect">Copy</button></span></li>
+          <li>Open the app's <b>User Management</b> tab and add the email of your Spotify account.</li>
+          <li>Copy the app's <b>Client ID</b> and paste it here:</li>
+        </ol>
+        <form class="cid-row" id="cidForm">
+          <input id="cidInput" placeholder="Client ID" autocomplete="off" spellcheck="false" maxlength="64">
+          <button class="btn primary" id="cidSave">Save &amp; log in</button>
+        </form>
+        <p id="cidErr" class="login-err hidden"></p>
+        <button type="button" class="link-btn hidden" id="cidReset">Use the built-in app instead</button>
       </details>
     </div>
   </div>

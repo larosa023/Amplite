@@ -29,10 +29,14 @@ Download **Amplite-Setup-x.y.z.exe** from [Releases](../../releases) and run it.
 
 ## One-time Spotify setup
 
-In your app on the [Spotify developer dashboard](https://developer.spotify.com/dashboard):
+Amplite signs in through a Spotify developer app. Spotify only lets 5 people use a developer app, and each one has to be added by its owner, so **everyone should use their own** (free, about 5 minutes):
 
-1. **Settings → Redirect URIs**: add `http://127.0.0.1:43821/callback` (exactly). Tick **Web API** and **Web Playback SDK**, then save.
-2. **User Management**: add the email of the Spotify account you'll log in with.
+1. Open the [Spotify developer dashboard](https://developer.spotify.com/dashboard), log in with your Spotify account and click **Create app**.
+2. Under **Redirect URIs** add `http://127.0.0.1:43821/callback` (exactly). Tick **Web API** and **Web Playback SDK**, then save.
+3. In the app's **User Management** tab, add the email of your Spotify account.
+4. In Amplite's login screen, open **Use your own Spotify app**, paste the app's **Client ID** and click **Save & log in**.
+
+You can change it later in **Settings → About → Spotify app**. Spotify Premium is required. No client secret is needed.
 
 ## Playback and audio quality
 
