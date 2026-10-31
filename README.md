@@ -9,6 +9,11 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Customizable amp** (Settings → Mini Amp): 8 skins plus fully custom colors, size, width, corners, font, glow, 6 visualizer styles, bar count, frame rate, album art, choose which parts to show, title scrolling, opacity and always-on-top.
 - **Custom accent color** on any theme (Settings → General).
 - **Edit your playlists**: on any playlist you own or collaborate on, click **Add songs** to search (or pick from recently played) and add with one click. Hover a song and click **⊖** to remove it, with **Undo**. Right-click any song anywhere → **Add to playlist…**
+- **Create, rename and delete playlists**: the **+** next to *Your playlists*, the pencil on a playlist's page, or right-click a playlist in the sidebar.
+- **Select several songs** with Ctrl- / Shift-click or `Ctrl+A`, then right-click to queue, add to a playlist or remove them all at once (`Delete` removes too). **Drag songs onto a playlist in the sidebar** to add them.
+- **Mini amp playlist window**: click **PL** on the amp for a Winamp-style list of the playlist or album that's playing (double-click to jump to a song), plus the queue.
+- **Taskbar controls**: previous / play / next on Amplite's taskbar preview and song progress on its taskbar icon (Settings → General).
+- **Last.fm scrobbling** and **Discord status** ("Listening to …"): Settings → Connections.
 - **Queue panel** (`Q`) and **right-click → Add to queue** on any song.
 - **Synced lyrics** (`L`) from [LRCLIB](https://lrclib.net). Click a line to jump to it, or show the current line on the mini amp's display.
 - **10-band equalizer** with presets, in an EQ panel under the mini amp and in Settings → Audio (built-in engine).
@@ -37,6 +42,11 @@ Amplite signs in through a Spotify developer app. Spotify only lets 5 people use
 4. In Amplite's login screen, open **Use your own Spotify app**, paste the app's **Client ID** and click **Save & log in**.
 
 You can change it later in **Settings → About → Spotify app**. Spotify Premium is required. No client secret is needed.
+
+## Last.fm and Discord (optional)
+
+- **Last.fm:** create a free API account at [last.fm/api/account/create](https://www.last.fm/api/account/create) (any name, callback URL empty). In **Settings → Connections**, paste its API key and shared secret, click **Connect**, and approve in your browser. Songs scrobble after half their length or 4 minutes; scrobbles made offline are sent later.
+- **Discord:** create an application named *Amplite* at [discord.com/developers/applications](https://discord.com/developers/applications), copy its **Application ID** into **Settings → Connections**, and turn on *Show what you're listening to*. Needs the Discord desktop app running.
 
 ## Playback and audio quality
 
@@ -89,6 +99,7 @@ Every push to `main` builds the installer on GitHub Actions and publishes it as 
 | Path | What it is |
 |---|---|
 | `main.js` | Desktop shell: window, local login server, mini amp window, media keys, updater |
+| `integrations.js` | Taskbar buttons/progress, Discord status, Last.fm scrobbling |
 | `engine.js` | Runs the bundled librespot audio engine (320 kbps) |
 | `preload.js` | Safe bridge between the shell and the UI |
 | `src/` | The UI: `index.html`, `styles.css`, `app.js` |

@@ -53,7 +53,7 @@
         <div class="side-label">Pinned</div>
         <div id="pins" class="pins"></div>
       </div>
-      <div class="side-label">Your playlists</div>
+      <div class="side-label side-head"><span>Your playlists</span><button id="newPlBtn" class="side-add" data-i="plus" title="New playlist"></button></div>
       <div id="playlists" class="playlists"></div>
     </aside>
 
@@ -164,9 +164,14 @@
           <span class="amp-sep"></span>
           <button data-amp="shuffle" class="amp-tog" title="Shuffle">SHUF</button>
           <button data-amp="repeat" class="amp-tog" title="Repeat">REP</button>
+          <button data-amp="pl" class="amp-tog" title="Playlist window">PL</button>
           <button data-amp="eq" class="amp-tog app-only" title="Equalizer">EQ</button>
         </div>
         <div class="amp-eq hidden" id="ampEq"></div>
+        <div class="amp-pl hidden" id="ampPl">
+          <div class="plw-tabs"><button data-pltab="list" class="on">PLAYLIST</button><button data-pltab="queue">QUEUE</button><span class="plw-src" id="ampPlSrc"></span></div>
+          <div class="plw-list" id="ampPlList"></div>
+        </div>
       </div>
     </div>
     <p class="amp-hint">Press <kbd>M</kbd> or ✕ to return to the full player</p>
@@ -185,6 +190,28 @@
     </div>
   </div>
 
+  <!-- Create / edit a playlist -->
+  <div id="plDialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="plDlgTitle">
+    <form class="modal-card pl-card" id="plForm">
+      <header class="modal-head">
+        <h2 id="plDlgTitle">New playlist</h2>
+        <button type="button" class="round-btn" data-close-pl data-i="x" title="Close (Esc)"></button>
+      </header>
+      <div class="pl-form">
+        <label>Name<input id="plName" maxlength="100" autocomplete="off" spellcheck="false" required></label>
+        <label>Description <span class="muted">(optional)</span><textarea id="plDesc" maxlength="300" rows="3"></textarea></label>
+        <label class="pl-check"><input type="checkbox" id="plPublic"> Show on my Spotify profile</label>
+        <p id="plErr" class="login-err hidden"></p>
+        <div class="pl-actions">
+          <button type="button" class="btn danger hidden" id="plDelete">Delete playlist</button>
+          <span class="flex1"></span>
+          <button type="button" class="btn" data-close-pl>Cancel</button>
+          <button class="btn primary" id="plSave">Create</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
   <!-- Settings -->
   <div id="settings" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="setTitle">
     <div class="modal-card">
@@ -197,6 +224,7 @@
           <button data-tab="general" class="active">General</button>
           <button data-tab="amp">Mini Amp</button>
           <button data-tab="audio" class="app-only">Audio</button>
+          <button data-tab="connect" class="app-only">Connections</button>
           <button data-tab="about">About</button>
         </nav>
         <div class="set-panes" id="setPanes"></div>

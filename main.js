@@ -2,6 +2,7 @@
 // the castLabs build keeps Widevine available as a fallback player.
 const { app, BrowserWindow, components, ipcMain, globalShortcut, shell, Menu, Tray, nativeImage } = require('electron');
 const http = require('http');
+const integrations = require('./integrations');
 const fs = require('fs');
 const path = require('path');
 
@@ -19,7 +20,7 @@ const boundsFile = () => path.join(app.getPath('userData'), 'window.json');
 
 /* ---------------- prefs needed before startup ---------------- */
 const prefsFile = () => path.join(app.getPath('userData'), 'prefs.json');
-let prefs = { closeToTray: true, startup: 'off', hwAccel: true };
+let prefs = { closeToTray: true, startup: 'off', hwAccel: true, taskbar: true, discord: false, discordAppId: '' };
 try { prefs = { ...prefs, ...JSON.parse(fs.readFileSync(prefsFile(), 'utf8')) }; } catch {}
 if (prefs.hwAccel === false) app.disableHardwareAcceleration(); // saves the GPU process (~100 MB)
 // Lighter Chromium: no hardware media-key handler (we use our own global shortcuts), capped disk cache.
@@ -209,6 +210,7 @@ ipcMain.handle('lyrics', async (_e, q = {}) => {
 ipcMain.on('prefs', (_e, p = {}) => {
   prefs = { ...prefs, ...p };
   try { fs.writeFileSync(prefsFile(), JSON.stringify(prefs)); } catch {}
+  integrations.configure(p);
   if (app.isPackaged && process.platform === 'win32') {
     try { app.setLoginItemSettings({ openAtLogin: prefs.startup !== 'off', args: prefs.startup !== 'off' ? [`--startup=${prefs.startup}`] : [] }); } catch {}
   }
@@ -242,7 +244,10 @@ function createTray() {
   } catch (e) { console.warn('Tray unavailable', e); }
 }
 ipcMain.on('now-playing', (_e, n = {}) => {
+  integrations.update(n);
+  const changed = n.title !== now.title || n.artist !== now.artist || (n.paused !== false) !== now.paused;
   now = { title: n.title || '', artist: n.artist || '', paused: n.paused !== false };
+  if (!changed) return; // position-only update (seek): nothing for the tray
   if (!tray) return;
   tray.setToolTip(now.title ? `${now.paused ? '⏸' : '▶'} ${now.title} — ${now.artist}`.slice(0, 120) : 'Amplite');
   tray.setContextMenu(trayMenu());
@@ -366,6 +371,16 @@ function initUpdater() {
   setTimeout(check, 5000);
   setInterval(check, 4 * 60 * 60 * 1000);
 }
+ipcMain.handle('discord-status', () => integrations.discordStatus());
+ipcMain.handle('lastfm', async (_e, action, a = {}) => {
+  const L = integrations.lastfm;
+  try {
+    if (action === 'connect') return { ok: true, state: await L.connect(a.key, a.secret) };
+    if (action === 'disconnect') L.disconnect();
+    if (action === 'on') L.setOn(a.on);
+    return { ok: true, state: L.state() };
+  } catch (e) { return { ok: false, error: e.message, state: L.state() }; }
+});
 ipcMain.handle('app-info', () => ({ version: app.getVersion(), packaged: app.isPackaged }));
 ipcMain.on('update-check', () => {
   if (!autoUpdater) return sendUpdate('error', { message: app.isPackaged ? 'Updater unavailable' : 'Updates only work in the installed app' });
@@ -392,11 +407,14 @@ app.whenReady().then(async () => {
   initUpdater();
 
   const send = cmd => mainWin?.webContents.send('media', cmd);
+  integrations.init(mainWin, send, prefs);
+  integrations.onDiscord(s => mainWin?.webContents.send('discord', s));
+  integrations.lastfm.onChange(s => mainWin?.webContents.send('lastfm', s));
   globalShortcut.register('MediaPlayPause', () => send('toggle'));
   globalShortcut.register('MediaNextTrack', () => send('next'));
   globalShortcut.register('MediaPreviousTrack', () => send('prev'));
   globalShortcut.register('MediaStop', () => send('stop'));
 });
 
-app.on('will-quit', () => { globalShortcut.unregisterAll(); engine.stop(); });
+app.on('will-quit', () => { globalShortcut.unregisterAll(); integrations.shutdown(); engine.stop(); });
 app.on('window-all-closed', () => app.quit());

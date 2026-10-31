@@ -54,10 +54,10 @@ const AMP_DEFAULTS = {
   scale: 1.1, width: 'normal', corners: 'soft', font: 'mono', glow: true,
   viz: 'bars', bars: 19, fps: 30,
   art: false, title: true, marquee: true, meta: true, vol: true, seek: true, controls: true, toggles: true,
-  scroll: 'normal', time: 'elapsed', opacity: 100, onTop: true, snap: true, corner: 'none', eqOpen: false, lyricLine: false,
+  scroll: 'normal', time: 'elapsed', opacity: 100, onTop: true, snap: true, corner: 'none', eqOpen: false, plOpen: false, lyricLine: false,
 };
 const EQ_DEFAULTS = { enabled: false, preamp: 0, auto: true, preset: 'flat', gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
-const DEFAULTS = { ui: { sideMin: false, lite: false, accent: '', closeToTray: true, startup: 'off', hwAccel: true }, eq: EQ_DEFAULTS, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto', hideSpotify: true } };
+const DEFAULTS = { ui: { sideMin: false, lite: false, accent: '', closeToTray: true, startup: 'off', hwAccel: true, taskbar: true, discord: false, discordAppId: '' }, eq: EQ_DEFAULTS, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto', hideSpotify: true } };
 const clone = o => JSON.parse(JSON.stringify(o));
 const CFG = (() => {
   const saved = store.get('cfg', {}) || {}, c = clone(DEFAULTS);
@@ -106,7 +106,7 @@ const ICONS = {
   queue: '<path d="M3 6h13M3 12h13M3 18h9M17 15v6l5-3z"/>',
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7"/>', listadd: '<path d="M3 6h12M3 12h12M3 18h7M18 13v8M14 17h8"/>',
 };
 const svg = n => {
@@ -330,7 +330,7 @@ function initSDK() {
         artists: t.artists.map(a => ({ name: a.name, id: a.uri?.split(':')[2] })),
         album: { name: t.album.name, id: t.album.uri?.split(':')[2], image: img(t.album.images, 300) },
         duration: st.duration, position: st.position, paused: st.paused,
-        shuffle: st.shuffle, repeat: st.repeat_mode, ts: performance.now(),
+        shuffle: st.shuffle, repeat: st.repeat_mode, ts: performance.now(), context: st.context?.uri || null,
       };
       updatePlayerUI();
     });
@@ -374,7 +374,7 @@ async function poll() {
       artists: (t.artists || []).map(a => ({ name: a.name, id: a.id })),
       album: { name: t.album?.name, id: t.album?.id, image: img(t.album?.images || t.images, 300) },
       duration: t.duration_ms, position: d.progress_ms, paused: !d.is_playing,
-      shuffle: d.shuffle_state, repeat: { off: 0, context: 1, track: 2 }[d.repeat_state] ?? 0, ts: performance.now(),
+      shuffle: d.shuffle_state, repeat: { off: 0, context: 1, track: 2 }[d.repeat_state] ?? 0, ts: performance.now(), context: d.context?.uri || null,
     };
     if (S.opt && Date.now() < S.opt.until) {
       for (const k of ['paused', 'shuffle', 'repeat']) if (k in S.opt) S.now[k] = S.opt[k];
@@ -750,11 +750,19 @@ function updatePlayerUI() {
     checkLiked(n?.uri || null);
     syncLyricsForTrack();
     if (D.tab === 'queue') setTimeout(renderQueue, 400);
+    if (CFG.amp.plOpen) setTimeout(renderAmpPl, PLW.tab === 'queue' ? 500 : 0);
   }
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
   if (IS_APP) {
-    const key = `${n?.uri}|${n?.paused}`;
-    if (key !== S.trayKey) { S.trayKey = key; window.amplite.nowPlaying({ title: n?.name, artist: n?.artists?.map(a => a.name).join(', '), paused: !n || n.paused }); }
+    // Sent on song / play-pause changes and on seeks (the song's start time moves), not every tick.
+    const p = n ? pos() : 0, key = `${n?.uri}|${n?.paused}|${n ? Math.round((Date.now() - p) / 3000) : 0}`;
+    if (key !== S.trayKey) {
+      S.trayKey = key;
+      window.amplite.nowPlaying(n ? {
+        uri: n.uri, title: n.name, artist: n.artists.map(a => a.name).join(', '), album: n.album?.name || '',
+        image: n.album?.image || '', duration: n.duration || 0, position: Math.round(p), paused: !!n.paused,
+      } : { paused: true });
+    }
   }
   if ('mediaSession' in navigator && n && navigator.mediaSession.metadata?.title !== n.name) {
     try {
@@ -800,7 +808,7 @@ async function navigate(name, arg = '', push = true) {
   $('#fwdBtn').disabled = !S.fwd.length;
   const el = $('#view'), tok = ++navToken, alive = () => tok === navToken;
   if (push) el.scrollTop = 0;
-  S.lists = []; S.hero = null; S.pl = null; closeAddSongs();
+  S.lists = []; S.hero = null; S.pl = null; closeAddSongs(); SEL.li = null; SEL.idx.clear(); SEL.anchor = null;
   el.innerHTML = '<div class="loading"><span></span><span></span><span></span></div>';
   try { await VIEWS[name](el, arg, alive); }
   catch (e) { if (alive()) el.innerHTML = `<div class="empty"><h2>Couldn't load that</h2><p>${esc(e.message)}</p></div>`; }
@@ -817,9 +825,10 @@ function card({ kind, id, uri, title, sub, image, round }) {
     <div class="card-title">${esc(title)}</div><div class="card-sub">${esc(sub || '')}</div></div>`;
 }
 
-function trackRows(tracks, { showAlbum, showArt, removable }, offset = 0) {
+function trackRows(tracks, { showAlbum, showArt, removable, li }, offset = 0) {
   const rm = removable ? `<button class="trm" data-rm title="Remove from this playlist">${svg('minus')}</button>` : '';
-  return tracks.map((t, j) => { const i = j + offset; return `<div class="trow ${t.playable ? '' : 'dim'}" data-idx="${i}" data-uri="${esc(t.uri)}" data-q="${esc(`${t.name} ${t.artists.map(a => a.name).join(' ')} ${t.album?.name || ''}`.toLowerCase())}">
+  const sel = li != null && SEL.li === li ? SEL.idx : null;
+  return tracks.map((t, j) => { const i = j + offset; return `<div class="trow ${t.playable ? '' : 'dim'}${sel?.has(i) ? ' sel' : ''}" draggable="true" data-idx="${i}" data-uri="${esc(t.uri)}" data-q="${esc(`${t.name} ${t.artists.map(a => a.name).join(' ')} ${t.album?.name || ''}`.toLowerCase())}">
       <div class="tnum"><span>${i + 1}</span>${svg('play')}</div>
       <div class="tmain">${showArt && t.album?.image ? `<img src="${esc(t.album.image)}" alt="" loading="lazy" decoding="async">` : ''}
         <div class="ttext"><div class="tname">${esc(t.name)}</div><div class="tartist">${artistLinks(t.artists)}</div></div></div>
@@ -830,7 +839,8 @@ function trackRows(tracks, { showAlbum, showArt, removable }, offset = 0) {
 // so opening a 2,000-song library never blocks the window.
 const FIRST_ROWS = 150, CHUNK_ROWS = 250;
 function trackTable(tracks, { context = null, showAlbum = true, showArt = true, removable = false } = {}) {
-  const li = S.lists.push({ tracks, orig: tracks, context, showAlbum, showArt, removable }) - 1;
+  const li = S.lists.length;
+  S.lists.push({ tracks, orig: tracks, context, showAlbum, showArt, removable, li });
   if (tracks.length > FIRST_ROWS) setTimeout(() => fillRows(li), 0);
   return `<div class="tracks ${showAlbum ? '' : 'no-album'}" data-list="${li}">
     <div class="thead"><span>#</span><span>Title</span>${showAlbum ? '<span>Album</span>' : ''}<span class="tdur">${svg('clock')}</span></div>
@@ -878,6 +888,7 @@ function applyListSort(key) {
   const L = S.lists[0], tbl = $('.tracks[data-list="0"] .tbody'); if (!L || !tbl) return;
   const cmp = SORTS[key]?.[1];
   L.tracks = cmp ? [...L.orig].sort(cmp) : L.orig;
+  clearSel();
   tbl.innerHTML = trackRows(L.tracks.slice(0, FIRST_ROWS), L);
   if (L.tracks.length > FIRST_ROWS) fillRows(0);
   store.set('sort:' + S.cur?.name, key);
@@ -903,7 +914,7 @@ function initListTools() {
   sel.onchange = () => applyListSort(sel.value);
 }
 
-function hero({ image, art, round, kind, title, desc, meta, pin, tools, extra }) {
+function hero({ image, art, round, kind, title, desc, meta, pin, tools, extra, extra2 }) {
   S.heroPin = pin || null;
   return `<header class="hero">
     ${art || (image ? `<img class="hero-art ${round ? 'round' : ''}" src="${esc(image)}" alt="">` : `<div class="hero-art ph">${svg('music')}</div>`)}
@@ -911,7 +922,7 @@ function hero({ image, art, round, kind, title, desc, meta, pin, tools, extra })
       ${desc ? `<p class="hero-desc">${esc(desc)}</p>` : ''}<div class="hero-meta">${meta || ''} <span id="listCount" class="muted"></span></div></div>
   </header><div class="actions pad"><button class="big-play" data-hero-play title="Play">${svg('play')}</button>
     ${tools ? listToolsHTML() : ''}${extra || ''}
-    ${pin ? `<button class="pin-btn ${isPinned(pin) ? 'on' : ''}" data-pin-toggle title="${isPinned(pin) ? 'Unpin' : 'Pin to sidebar'}">${svg('pin')}<span>${isPinned(pin) ? 'Pinned' : 'Pin'}</span></button>` : ''}</div>`;
+    ${pin ? `<button class="pin-btn ${isPinned(pin) ? 'on' : ''}" data-pin-toggle title="${isPinned(pin) ? 'Unpin' : 'Pin to sidebar'}">${svg('pin')}<span>${isPinned(pin) ? 'Pinned' : 'Pin'}</span></button>` : ''}${extra2 || ''}</div>`;
 }
 
 function playRow(row) {
@@ -1017,13 +1028,14 @@ async function viewPlaylist(el, id, alive) {
   if (!alive()) return;
   S.hero = { context: pl.uri };
   const editable = canEdit(pl) && !note;
-  S.pl = { id: pl.id, uri: pl.uri, name: pl.name, editable };
+  S.pl = { id: pl.id, uri: pl.uri, name: pl.name, editable, desc: stripHtml(pl.description || ''), public: !!pl.public, own: pl.owner?.id === S.me?.id };
   const total = pl.items?.total ?? pl.tracks?.total ?? tracks.length;
   el.innerHTML = hero({
     image: img(pl.images), kind: pl.public === false ? 'Private playlist' : 'Playlist', title: pl.name, tools: tracks.length > 0,
     pin: { type: 'playlist', id: pl.id, uri: pl.uri, name: pl.name, image: img(pl.images, 64) },
     desc: stripHtml(pl.description), meta: `${esc(pl.owner?.display_name || '')} · <span id="plCount">${total}</span> songs`,
     extra: editable ? `<button class="pin-btn" data-add-songs title="Add songs to this playlist">${svg('plus')}<span>Add songs</span></button>` : '',
+    extra2: canEdit(pl) && pl.owner?.id === S.me?.id ? `<button class="pin-btn icon-only" data-edit-pl title="Rename, change description or delete">${svg('edit')}</button>` : '',
   }) + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri, removable: editable })
     : editable ? `<div class="empty small"><p>This playlist is empty.</p><button class="pill-btn" data-add-songs>${svg('plus')} Add songs</button></div>` : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`;
   initListTools();
@@ -1130,6 +1142,12 @@ async function renderQueue() {
       : '<p class="muted small-note">Start playing something to see what’s up next.</p>';
   } catch (e) { body.innerHTML = `<p class="muted small-note">Couldn’t load the queue (${esc(e.message)}).</p>`; }
 }
+async function addManyToQueue(tracks) {
+  let n = 0;
+  for (const t of tracks) { try { await api('/me/player/queue', { method: 'POST', query: { uri: t.uri } }); n++; } catch (e) { if (!n) return toast(e.status === 404 ? 'Start playing something first, then add to the queue.' : e.message); break; } }
+  toast(`Added ${n} songs to queue`);
+  if (D.tab === 'queue') setTimeout(renderQueue, 500);
+}
 async function addToQueue(uri) {
   try {
     await api('/me/player/queue', { method: 'POST', query: { uri } });
@@ -1151,6 +1169,7 @@ function needsEditPermission(e) {
   return true;
 }
 function playlistChanged(id) {
+  PLW.cache.delete('spotify:playlist:' + id); if (PLW.ctx === 'spotify:playlist:' + id) { PLW.rendered = ''; setTimeout(renderAmpPl, 300); }
   purgeCache(new RegExp(`/playlists/${id}(/|\\?|$)`));
   purgeCache(/\/me\/playlists/);
 }
@@ -1178,31 +1197,37 @@ function renumberList() {
   applyListFilter(); markPlaying();
 }
 
-async function removeRow(row) {
-  const L = S.lists[+row.closest('.tracks').dataset.list], pl = S.pl;
-  const t = L?.tracks[+row.dataset.idx]; if (!t || !pl?.editable) return;
-  // Spotify removes every copy of the song, so do the same on screen.
-  const origPos = L.orig.findIndex(x => x.uri === t.uri);
-  const copies = L.orig.filter(x => x.uri === t.uri).length;
-  const keep = x => x.uri !== t.uri;
+const removeRow = row => { const li = +row.closest('.tracks').dataset.list, t = S.lists[li]?.tracks[+row.dataset.idx]; if (t) removeTracks(li, [t]); };
+async function removeTracks(li, list) {
+  const L = S.lists[li], pl = S.pl; if (!L || !pl?.editable || !list.length) return;
+  // Spotify removes every copy of a song, so do the same on screen.
+  const uris = [...new Set(list.map(t => t.uri))], gone = new Set(uris);
+  const restore = uris.map(uri => ({ uri, pos: L.orig.findIndex(x => x.uri === uri), copies: L.orig.filter(x => x.uri === uri).length })).sort((a, b) => a.pos - b.pos);
   const before = { orig: L.orig, tracks: L.tracks };
+  const keep = x => !gone.has(x.uri);
   L.orig = L.orig.filter(keep); L.tracks = L.tracks === before.orig ? L.orig : L.tracks.filter(keep);
-  row.closest('.tbody').querySelectorAll('.trow').forEach(r => { if (r.dataset.uri === t.uri) r.remove(); });
-  renumberList(); setPlCount(L.orig.length);
+  $(`.tracks[data-list="${li}"] .tbody`)?.querySelectorAll('.trow').forEach(r => { if (gone.has(r.dataset.uri)) r.remove(); });
+  clearSel(); renumberList(); setPlCount(L.orig.length);
   try {
-    await removeFromPlaylist(pl.id, [t.uri]);
-    toast(`Removed “${t.name}”`, copies === 1 && S.pl?.id === pl.id ? { label: 'Undo', run: () => undoRemove(pl, t, origPos) } : null);
+    for (let i = 0; i < uris.length; i += 100) await removeFromPlaylist(pl.id, uris.slice(i, i + 100));
+    const undo = restore.every(r => r.copies === 1) ? { label: 'Undo', run: () => undoRemove(pl, restore) } : null;
+    toast(uris.length === 1 ? `Removed “${list[0].name}”` : `Removed ${uris.length} songs`, undo);
   } catch (e) {
     if (S.pl?.id === pl.id) { L.orig = before.orig; L.tracks = before.tracks; navigate('playlist', pl.id, false); }
-    if (!needsEditPermission(e)) toast(`Couldn’t remove it: ${e.message}`);
+    if (!needsEditPermission(e)) toast(`Couldn’t remove: ${e.message}`);
   }
 }
-async function undoRemove(pl, t, pos) {
+// Put songs back exactly where they were: insert in ascending order, one call per unbroken run.
+async function undoRemove(pl, restore) {
   try {
-    await addToPlaylist(pl.id, [t.uri], pos);
+    for (let i = 0; i < restore.length;) {
+      let j = i + 1; while (j < restore.length && restore[j].pos === restore[j - 1].pos + 1 && j - i < 100) j++;
+      await addToPlaylist(pl.id, restore.slice(i, j).map(r => r.uri), restore[i].pos);
+      i = j;
+    }
     if (S.pl?.id === pl.id) navigate('playlist', pl.id, false);
     toast('Restored');
-  } catch (e) { toast(`Couldn’t restore it: ${e.message}`); }
+  } catch (e) { toast(`Couldn’t restore: ${e.message}`); }
 }
 
 // After adding from the "Add songs" panel, show the song at the bottom of the open playlist right away.
@@ -1217,21 +1242,183 @@ function appendToOpenList(t) {
   return true;
 }
 
+// Add songs to one of your playlists (chunks of 100, Spotify's limit) and show them if it's open.
+async function addTracksTo(p, tracks) {
+  try {
+    const uris = tracks.map(t => t.uri);
+    for (let i = 0; i < uris.length; i += 100) await addToPlaylist(p.id, uris.slice(i, i + 100));
+    toast(tracks.length === 1 ? `Added to ${p.name}` : `Added ${tracks.length} songs to ${p.name}`);
+    if (S.pl?.id === p.id && S.pl.editable) { if (!tracks.every(t => appendToOpenList(t))) navigate('playlist', p.id, false); }
+  } catch (err) { if (!needsEditPermission(err)) toast(`Couldn’t add: ${err.message}`); }
+}
 // Right-click → Add to playlist: a second menu listing the playlists you can edit.
-function pickPlaylist(e, t) {
+function pickPlaylist(e, tracks) {
+  if (!Array.isArray(tracks)) tracks = [tracks];
   const lists = editablePlaylists();
   if (!lists.length) return toast('You don’t have any playlists of your own yet.');
   // Next tick: the click that chose "Add to playlist…" would otherwise close this menu straight away.
-  setTimeout(() => showCtx(e, lists.slice(0, 40).map(p => ({
-    icon: S.pl?.id === p.id ? 'check' : 'music', label: p.name,
-    run: async () => {
-      try {
-        await addToPlaylist(p.id, [t.uri]);
-        toast(`Added to ${p.name}`);
-        if (S.pl?.id === p.id && S.pl.editable && !appendToOpenList(t)) navigate('playlist', p.id, false);
-      } catch (err) { if (!needsEditPermission(err)) toast(`Couldn’t add it: ${err.message}`); }
-    },
-  }))), 0);
+  setTimeout(() => showCtx(e, [
+    { icon: 'plus', label: 'New playlist…', run: () => { S.pendingAdd = tracks; openPlDialog(null); } }, '-',
+    ...lists.slice(0, 40).map(p => ({ icon: S.pl?.id === p.id ? 'check' : 'music', label: p.name, run: () => addTracksTo(p, tracks) })),
+  ]), 0);
+}
+
+/* ---- selecting several songs (click, Ctrl+click, Shift+click, Ctrl+A) ---- */
+const SEL = { li: null, idx: new Set(), anchor: null };
+const selRows = li => $$(`.tracks[data-list="${li}"] .trow`);
+function paintSel() {
+  $$('.trow.sel').forEach(r => r.classList.remove('sel'));
+  if (SEL.li == null) return;
+  for (const r of selRows(SEL.li)) if (SEL.idx.has(+r.dataset.idx)) r.classList.add('sel');
+}
+function clearSel() { if (SEL.li == null && !SEL.idx.size) return; SEL.li = null; SEL.idx.clear(); SEL.anchor = null; paintSel(); }
+function selectRow(row, e) {
+  const li = +row.closest('.tracks').dataset.list, i = +row.dataset.idx;
+  if (SEL.li !== li) { SEL.li = li; SEL.idx.clear(); SEL.anchor = null; }
+  if (e.shiftKey && SEL.anchor != null) {
+    // Range in what's on screen (respects sort + filter).
+    const vis = selRows(li).filter(r => !r.hidden).map(r => +r.dataset.idx);
+    const a = vis.indexOf(SEL.anchor), b = vis.indexOf(i);
+    if (!(e.ctrlKey || e.metaKey)) SEL.idx.clear();
+    if (a >= 0 && b >= 0) vis.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => SEL.idx.add(x));
+  } else if (e.ctrlKey || e.metaKey) {
+    SEL.idx.has(i) ? SEL.idx.delete(i) : SEL.idx.add(i); SEL.anchor = i;
+  } else { SEL.idx.clear(); SEL.idx.add(i); SEL.anchor = i; }
+  paintSel();
+}
+function selectAll() {
+  if (!S.lists[0]) return false;
+  SEL.li = 0; SEL.idx.clear();
+  const rows = selRows(0), filtered = !!($('#listFilter')?.value || '').trim();
+  if (filtered || rows.length >= S.lists[0].tracks.length) rows.filter(r => !r.hidden).forEach(r => SEL.idx.add(+r.dataset.idx));
+  else S.lists[0].tracks.forEach((_, i) => SEL.idx.add(i));
+  paintSel(); return true;
+}
+const selTracks = () => SEL.li == null ? [] : [...SEL.idx].sort((a, b) => a - b).map(i => S.lists[SEL.li]?.tracks[i]).filter(Boolean);
+
+/* ---- drag songs onto a playlist in the sidebar ---- */
+const DRAG_TYPE = 'application/x-amplite-tracks';
+function dropTarget(el) {
+  const it = el?.closest?.('.pl-item, .pin-item, [data-pinfo]'); if (!it) return null;
+  let id = it.dataset.id;
+  if (!id && it.dataset.pinfo) { try { const o = JSON.parse(it.dataset.pinfo); if (o.type === 'playlist') id = o.id; } catch {} }
+  const p = id && S.playlists.find(x => x?.id === id);
+  return p && canEdit(p) ? { el: it, p } : null;
+}
+function bindDrag() {
+  let dragging = null, ghost = null;
+  document.addEventListener('dragstart', e => {
+    const row = e.target.closest?.('.trow'); if (!row) return;
+    const li = +row.closest('.tracks').dataset.list;
+    if (!(SEL.li === li && SEL.idx.has(+row.dataset.idx))) selectRow(row, {});
+    dragging = selTracks(); if (!dragging.length) return;
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData(DRAG_TYPE, '1');
+    e.dataTransfer.setData('text/plain', dragging.map(t => 'https://open.spotify.com/track/' + t.id).join('\n'));
+    ghost = document.createElement('div'); ghost.className = 'drag-ghost';
+    ghost.textContent = dragging.length === 1 ? dragging[0].name : `${dragging.length} songs`;
+    document.body.append(ghost); e.dataTransfer.setDragImage(ghost, 12, 12);
+    document.documentElement.classList.add('dragging-songs');
+  });
+  document.addEventListener('dragend', () => {
+    dragging = null; ghost?.remove(); ghost = null;
+    document.documentElement.classList.remove('dragging-songs');
+    $$('.drop-on').forEach(x => x.classList.remove('drop-on'));
+  });
+  const side = $('.sidebar');
+  side.addEventListener('dragover', e => {
+    if (!dragging) return;
+    const t = dropTarget(e.target);
+    $$('.drop-on').forEach(x => { if (x !== t?.el) x.classList.remove('drop-on'); });
+    if (!t) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; t.el.classList.add('drop-on');
+  });
+  side.addEventListener('drop', e => {
+    if (!dragging) return;
+    const t = dropTarget(e.target); if (!t) return;
+    e.preventDefault(); e.stopPropagation();
+    const tracks = dragging; t.el.classList.remove('drop-on');
+    addTracksTo(t.p, tracks);
+  });
+}
+
+// ---- create / rename / delete playlists ----
+let plEditing = null; // null = creating a new one
+function openPlDialog(pl = null) {
+  plEditing = pl;
+  $('#plDlgTitle').textContent = pl ? 'Edit playlist' : 'New playlist';
+  $('#plSave').textContent = pl ? 'Save' : 'Create';
+  $('#plName').value = pl?.name || '';
+  $('#plDesc').value = pl?.desc || '';
+  $('#plPublic').checked = !!pl?.public;
+  $('#plDelete').classList.toggle('hidden', !pl);
+  $('#plDelete').textContent = 'Delete playlist'; $('#plDelete').dataset.armed = '';
+  $('#plErr').classList.add('hidden');
+  $('#plDialog').classList.remove('hidden');
+  setTimeout(() => { $('#plName').focus(); $('#plName').select(); }, 0);
+}
+const closePlDialog = () => $('#plDialog').classList.add('hidden');
+const plDialogOpen = () => !$('#plDialog').classList.contains('hidden');
+function plError(e) {
+  if (needsEditPermission(e)) { closePlDialog(); return; }
+  $('#plErr').textContent = e.message; $('#plErr').classList.remove('hidden');
+}
+async function refreshPlaylists() { purgeCache(/\/me\/playlists/); try { store.del('swr:https://api.spotify.com/v1/me/playlists?limit=50&offset=0'); } catch {} await loadPlaylists(); }
+async function savePlDialog() {
+  const name = $('#plName').value.trim(), description = $('#plDesc').value.trim(), isPublic = $('#plPublic').checked;
+  if (!name) { $('#plName').focus(); return; }
+  $('#plSave').disabled = true;
+  try {
+    if (!plEditing) {
+      const pend = S.pendingAdd; S.pendingAdd = null;
+      const pl = await api('/me/playlists', { method: 'POST', body: { name, description, public: isPublic } });
+      closePlDialog(); toast(`Created “${name}”`);
+      if (pl?.id && pend?.length) await addTracksTo({ id: pl.id, name }, pend);
+      await refreshPlaylists();
+      if (pl?.id) navigate('playlist', pl.id);
+    } else {
+      const body = { name, public: isPublic };
+      if (description !== (plEditing.desc || '')) body.description = description;
+      await api(`/playlists/${plEditing.id}`, { method: 'PUT', body });
+      playlistChanged(plEditing.id);
+      // Keep a pin's label in step with the new name.
+      const pins = getPins(), pin = pins.find(p => p.type === 'playlist' && p.id === plEditing.id);
+      if (pin) { pin.name = name; store.set('pins', pins); renderPins(); }
+      closePlDialog(); toast('Playlist updated');
+      await refreshPlaylists();
+      if (S.cur?.name === 'playlist' && S.cur.arg === plEditing.id) navigate('playlist', plEditing.id, false);
+    }
+  } catch (e) { plError(e); }
+  $('#plSave').disabled = false;
+}
+async function deletePlaylist() {
+  const b = $('#plDelete'), pl = plEditing; if (!pl) return;
+  // Two clicks, so a playlist is never deleted by accident.
+  if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Click again to delete'; setTimeout(() => { if (b.dataset.armed) { b.dataset.armed = ''; b.textContent = 'Delete playlist'; } }, 4000); return; }
+  b.disabled = true;
+  try {
+    // Spotify "deletes" a playlist by unfollowing it (it stays recoverable at spotify.com/account/recover-playlists).
+    try { await api('/me/library', { method: 'DELETE', query: { uris: pl.uri || 'spotify:playlist:' + pl.id } }); }
+    catch (e) { if (e.status === 401 || e.status === 403) throw e; await api(`/playlists/${pl.id}/followers`, { method: 'DELETE' }); }
+    const pins = getPins().filter(p => !(p.type === 'playlist' && p.id === pl.id));
+    store.set('pins', pins); renderPins();
+    closePlDialog(); toast(`Deleted “${pl.name}”`);
+    playlistChanged(pl.id);
+    await refreshPlaylists();
+    if (S.cur?.name === 'playlist' && S.cur.arg === pl.id) navigate('home');
+  } catch (e) { plError(e); }
+  b.disabled = false;
+}
+function bindPlDialog() {
+  $('#newPlBtn').onclick = e => { e.stopPropagation(); openPlDialog(null); };
+  $('#plForm').onsubmit = e => { e.preventDefault(); savePlDialog(); };
+  $('#plDelete').onclick = deletePlaylist;
+  $('#plDialog').addEventListener('click', e => { if (e.target.id === 'plDialog' || e.target.closest('[data-close-pl]')) { S.pendingAdd = null; closePlDialog(); } });
+}
+// Sidebar right-click on one of your playlists → Rename / Delete.
+function plFromSidebar(id) {
+  const p = S.playlists.find(x => x?.id === id); if (!p) return null;
+  return { id: p.id, uri: p.uri, name: p.name, desc: stripHtml(p.description || ''), public: !!p.public, own: p.owner?.id === S.me?.id };
 }
 
 // ---- "Add songs" panel (search + recently played) ----
@@ -1305,6 +1492,92 @@ function bindAddSongs() {
     if (e.target.closest('[data-as-more]')) return addSearch(true);
   });
   m.addEventListener('dblclick', e => { const r = e.target.closest('[data-as]'); if (r && !e.target.closest('button')) { const t = AS.results[+r.dataset.as]; if (t) playUris([t.uri]); } });
+}
+
+// ---- mini amp playlist window (Winamp-style "PL") ----
+// PLAYLIST: the list you're playing from (playlist, album or Liked Songs). QUEUE: what Spotify plays next.
+const PLW = { tab: 'list', ctx: undefined, tracks: [], seq: 0, cache: new Map(), rendered: '' };
+async function contextTracks(ctx) {
+  if (PLW.cache.has(ctx)) return PLW.cache.get(ctx);
+  const parts = ctx.split(':'), kind = parts[1], id = parts[2];
+  let out = null;
+  if (kind === 'playlist') {
+    const items = await pageAll(`/playlists/${id}/items`, { limit: 50 }, 1000);
+    const known = S.playlists.find(p => p?.id === id);
+    out = { name: known?.name || (await api(`/playlists/${id}`).catch(() => null))?.name || 'Playlist', tracks: items.map(i => norm(i.item || i.track)).filter(Boolean) };
+  } else if (kind === 'album') {
+    const al = await api(`/albums/${id}`);
+    let items = al.tracks?.items || [], nx = al.tracks?.next;
+    while (nx && items.length < 500) { const p = await api(nx); items = items.concat(p?.items || []); nx = p?.next; }
+    out = { name: al.name, tracks: items.map(t => norm({ ...t, album: { id: al.id, name: al.name, images: al.images } })).filter(Boolean) };
+  } else if (ctx.endsWith(':collection')) {
+    const items = await pageAll('/me/tracks', { limit: 50 }, 2000);
+    out = { name: 'Liked Songs', tracks: items.map(i => norm(i.track)).filter(Boolean), liked: true };
+  }
+  if (out) { PLW.cache.set(ctx, out); if (PLW.cache.size > 6) PLW.cache.delete(PLW.cache.keys().next().value); }
+  return out;
+}
+const plwRow = (t, i, now, play = true) => `<div class="plw-row${now ? ' now' : ''}${play ? '' : ' np'}" data-pli="${i}" title="${esc(t.name)} — ${esc(t.artists.map(a => a.name).join(', '))}">
+  <span class="n">${i + 1}.</span><span class="t">${esc(t.artists.map(a => a.name).join(', '))} - ${esc(t.name)}</span><span class="d">${fmt(t.duration)}</span></div>`;
+async function renderAmpPl(force = false) {
+  if (!CFG.amp.plOpen || !A.plList) return;
+  const seq = ++PLW.seq, list = A.plList, n = S.now;
+  $$('[data-pltab]', ampEl).forEach(b => b.classList.toggle('on', b.dataset.pltab === PLW.tab));
+  const msg = t => { list.innerHTML = `<p class="plw-msg">${t}</p>`; PLW.rendered = ''; };
+  if (PLW.tab === 'queue') {
+    A.plSrc.textContent = '';
+    if (!n) return msg('Nothing playing.');
+    if (!force && PLW.qUri === n.uri) return; PLW.qUri = n.uri;
+    try {
+      const d = await api('/me/player/queue');
+      if (seq !== PLW.seq) return;
+      const cur = d?.currently_playing ? norm(d.currently_playing) : null, next = (d?.queue || []).map(norm).filter(Boolean).slice(0, 50);
+      PLW.tracks = []; PLW.rendered = '';
+      list.innerHTML = (cur ? plwRow(cur, -1, true, false).replace('<span class="n">0.</span>', '<span class="n">▶</span>') : '')
+        + (next.length ? next.map((t, i) => plwRow(t, i, false, false)).join('') : '<p class="plw-msg">Nothing queued.</p>');
+    } catch (e) { if (seq === PLW.seq) msg('Couldn’t load the queue.'); }
+    return;
+  }
+  const ctx = n?.context || null;
+  if (!ctx) { A.plSrc.textContent = ''; PLW.ctx = null; return msg(n ? 'These songs aren’t playing from a playlist or album. See QUEUE.' : 'Nothing playing. Pick a playlist or album to see it here.'); }
+  if (ctx !== PLW.ctx || force || !PLW.rendered) {
+    if (ctx !== PLW.ctx) list.innerHTML = '<p class="plw-msg">Loading…</p>';
+    PLW.ctx = ctx;
+    let data = null;
+    try { data = await contextTracks(ctx); } catch {}
+    if (seq !== PLW.seq) return;
+    if (!data) { A.plSrc.textContent = ''; return msg(/:artist:/.test(ctx) ? 'Playing an artist’s songs. See QUEUE for what’s next.' : 'Spotify doesn’t let Amplite list this one. See QUEUE.'); }
+    PLW.tracks = data.tracks; PLW.liked = !!data.liked;
+    A.plSrc.textContent = data.name;
+    list.innerHTML = data.tracks.length ? data.tracks.map((t, i) => plwRow(t, i, false)).join('') : '<p class="plw-msg">This list is empty.</p>';
+    PLW.rendered = ctx;
+  }
+  markAmpPl();
+}
+function markAmpPl() {
+  const list = A.plList; if (!list || PLW.tab !== 'list') return;
+  list.querySelector('.plw-row.now')?.classList.remove('now');
+  const i = PLW.tracks.findIndex(t => t.uri === S.now?.uri);
+  const row = i >= 0 && list.querySelector(`[data-pli="${i}"]`);
+  if (row) {
+    row.classList.add('now');
+    // Keep the current song in view without moving the whole window.
+    const top = row.offsetTop, h = list.clientHeight;
+    if (top < list.scrollTop || top > list.scrollTop + h - row.offsetHeight) list.scrollTop = top - h / 3;
+  }
+}
+function bindAmpPl() {
+  A.pl.addEventListener('click', e => {
+    const tb = e.target.closest('[data-pltab]'); if (!tb) return;
+    PLW.tab = tb.dataset.pltab; PLW.rendered = ''; PLW.qUri = null; renderAmpPl(true);
+  });
+  A.pl.addEventListener('dblclick', e => {
+    const r = e.target.closest('.plw-row'); if (!r || r.classList.contains('np') || PLW.tab !== 'list') return;
+    const t = PLW.tracks[+r.dataset.pli]; if (!t || !t.playable) return;
+    activate();
+    if (PLW.liked) { const ok = PLW.tracks.filter(x => x.playable); playUris(ok.map(x => x.uri), ok.indexOf(t)); }
+    else playContext(PLW.ctx, t.uri);
+  });
 }
 
 // ---- lyrics (LRCLIB) ----
@@ -1395,11 +1668,23 @@ function bindCtx() {
     const row = e.target.closest('.trow');
     if (row) {
       e.preventDefault();
-      const L = S.lists[+row.closest('.tracks').dataset.list], t = L?.tracks[+row.dataset.idx]; if (!t) return;
+      const li = +row.closest('.tracks').dataset.list, L = S.lists[li], t = L?.tracks[+row.dataset.idx]; if (!t) return;
+      // Right-clicking outside the current selection selects just that song (like Explorer).
+      if (!(SEL.li === li && SEL.idx.has(+row.dataset.idx))) selectRow(row, {});
+      const sel = selTracks();
+      if (sel.length > 1) {
+        const many = [
+          { icon: 'play', label: `Play ${sel.length} songs`, run: () => { const ok = sel.filter(x => x.playable); if (ok.length) playUris(ok.map(x => x.uri), 0); } },
+          { icon: 'queue', label: `Add ${sel.length} songs to queue`, run: () => addManyToQueue(sel) },
+          { icon: 'listadd', label: `Add ${sel.length} songs to playlist…`, run: () => pickPlaylist(e, sel) },
+        ];
+        if (L.removable && S.pl?.editable) many.push('-', { icon: 'minus', label: `Remove ${sel.length} songs from this playlist`, run: () => removeTracks(li, sel) });
+        return showCtx(e, many);
+      }
       const items = [
         { icon: 'play', label: 'Play', run: () => playRow(row) },
         { icon: 'queue', label: 'Add to queue', run: () => addToQueue(t.uri) },
-        { icon: 'listadd', label: 'Add to playlist…', run: () => pickPlaylist(e, t) },
+        { icon: 'listadd', label: 'Add to playlist…', run: () => pickPlaylist(e, [t]) },
       ];
       if (L.removable && S.pl?.editable) items.push({ icon: 'minus', label: 'Remove from this playlist', run: () => removeRow(row) });
       items.push('-');
@@ -1417,6 +1702,9 @@ function bindCtx() {
       { icon: 'right', label: 'Open', run: () => openPin(o) },
       '-',
       { icon: 'pin', label: pinned ? 'Unpin from sidebar' : 'Pin to sidebar', run: () => togglePin(o) },
+      ...(o.type === 'playlist' && plFromSidebar(o.id)?.own ? ['-',
+        { icon: 'edit', label: 'Rename…', run: () => openPlDialog(plFromSidebar(o.id)) },
+        { icon: 'x', label: 'Delete…', run: () => { openPlDialog(plFromSidebar(o.id)); $('#plDelete').click(); } }] : []),
     ]);
   });
   ['click', 'blur', 'resize'].forEach(ev => window.addEventListener(ev, () => m.classList.add('hidden')));
@@ -1448,7 +1736,7 @@ const ampEl = $('#amp');
 const A = {
   time: $('#ampTime', ampEl), state: $('#ampState', ampEl), marq: $('#ampMarq', ampEl), viz: $('#ampViz', ampEl),
   seek: $('#ampSeek', ampEl), dur: $('#ampDur', ampEl), vol: $('#ampVol', ampEl), dev: $('#ampDev', ampEl), art: $('#ampArt', ampEl),
-  shuf: $('[data-amp="shuffle"]', ampEl), rep: $('[data-amp="repeat"]', ampEl), eqBtn: $('[data-amp="eq"]', ampEl), eq: $('#ampEq', ampEl),
+  shuf: $('[data-amp="shuffle"]', ampEl), rep: $('[data-amp="repeat"]', ampEl), eqBtn: $('[data-amp="eq"]', ampEl), eq: $('#ampEq', ampEl), plBtn: $('[data-amp="pl"]', ampEl), pl: $('#ampPl', ampEl), plList: $('#ampPlList', ampEl), plSrc: $('#ampPlSrc', ampEl),
 };
 const ampOpen = () => !!S.ampWin || S.ampMode === 'inline';
 
@@ -1564,6 +1852,9 @@ function applyAmp() {
   A.viz.width = n * BAR_W - 1; A.viz.style.width = A.viz.width + 'px';
   S.ampRemain = c.time === 'remaining';
   A.eq.classList.toggle('hidden', !c.eqOpen || !IS_APP);
+  A.pl.classList.toggle('hidden', !c.plOpen);
+  A.plBtn?.classList.toggle('on', !!c.plOpen);
+  if (c.plOpen) renderAmpPl();
   syncEq();
   S.vizGrad = null; V.text = ''; V.idle = false;
   fitAmp();
@@ -1690,8 +1981,15 @@ function drawAmp() {
 /* ---------------- events ---------------- */
 function onKey(e) {
   const tag = e.target?.tagName;
+  if (e.key === 'Escape' && plDialogOpen()) { closePlDialog(); return; }
   if (e.key === 'Escape' && AS.open) { closeAddSongs(); return; }
   if ((tag === 'INPUT' && e.target.type !== 'range') || tag === 'TEXTAREA') return;
+  const overlay = plDialogOpen() || !$('#settings').classList.contains('hidden');
+  if (!overlay && !S.ampWin) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { if (selectAll()) e.preventDefault(); return; }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && SEL.idx.size && S.lists[SEL.li]?.removable && S.pl?.editable) { e.preventDefault(); removeTracks(SEL.li, selTracks()); return; }
+    if (e.key === 'Escape' && SEL.idx.size) { clearSel(); return; }
+  }
   if (e.key === 'Escape' && !$('#settings').classList.contains('hidden')) { closeSettings(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleSidebar(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); openSettings(); return; }
@@ -1753,12 +2051,16 @@ function bind() {
     if (e.target.closest('[data-pin-toggle]')) { togglePin(S.heroPin); return; }
     if (e.target.closest('[data-hero-shuffle]')) { shufflePlay(); return; }
     if (e.target.closest('[data-add-songs]')) { openAddSongs(); return; }
+    if (e.target.closest('[data-edit-pl]')) { openPlDialog(S.pl); return; }
     const rm = e.target.closest('[data-rm]');
     if (rm) { e.stopPropagation(); removeRow(rm.closest('.trow')); return; }
     const num = e.target.closest('.tnum');
     if (num) { playRow(num.closest('.trow')); return; }
     const open = e.target.closest('[data-open]');
-    if (open) { const i = open.dataset.open.indexOf(':'); navigate(open.dataset.open.slice(0, i), open.dataset.open.slice(i + 1)); }
+    if (open) { const i = open.dataset.open.indexOf(':'); navigate(open.dataset.open.slice(0, i), open.dataset.open.slice(i + 1)); return; }
+    const row = e.target.closest('.trow');
+    if (row) { selectRow(row, e); return; }
+    if (e.target.closest('#view') && !e.target.closest('button, input, select, a, .ctx-menu')) clearSel();
   });
   document.addEventListener('dblclick', e => {
     const row = e.target.closest('.trow');
@@ -1774,9 +2076,10 @@ function bind() {
       prev, next, stop, shuffle: toggleShuffle, repeat: cycleRepeat, like: toggleLike,
       play: () => (S.now && !S.now.paused ? seek(0) : resume()),
       pause: () => (S.now?.paused ? resume() : pause()),
-      popout: ampPopToggle, close: ampClose, eq: toggleAmpEq,
+      popout: ampPopToggle, close: ampClose, eq: toggleAmpEq, pl: () => setK('amp.plOpen', !CFG.amp.plOpen),
     })[b.dataset.amp]?.();
   });
+  bindAmpPl();
   A.time.onclick = () => { S.ampRemain = !S.ampRemain; };
   A.seek.oninput = () => { S.ampSeeking = true; A.seek.style.setProperty('--p', A.seek.value / A.seek.max * 100 + '%'); };
   A.seek.onchange = () => { seek(A.seek.value / A.seek.max * (S.now?.duration || 0)); S.ampSeeking = false; A.seek._v = null; };
@@ -1869,7 +2172,7 @@ function applyAccent() {
 }
 function applyUI() {
   applyAccent();
-  if (IS_APP) window.amplite.setPrefs({ closeToTray: CFG.ui.closeToTray, startup: CFG.ui.startup, hwAccel: CFG.ui.hwAccel });
+  if (IS_APP) window.amplite.setPrefs({ closeToTray: CFG.ui.closeToTray, startup: CFG.ui.startup, hwAccel: CFG.ui.hwAccel, taskbar: CFG.ui.taskbar, discord: CFG.ui.discord, discordAppId: CFG.ui.discordAppId });
   $('#app').classList.toggle('side-min', !!CFG.ui.sideMin);
   document.documentElement.classList.toggle('lite', !!CFG.ui.lite);
   const t = $('#sideToggle'); if (t) t.title = (CFG.ui.sideMin ? 'Expand' : 'Collapse') + ' sidebar (Ctrl+B)';
@@ -1901,7 +2204,8 @@ function settingsHTML() {
           <div class="ctl accents">${ACCENTS.map(c => `<button class="acc" data-accent="${c}" style="background:${c}" title="${c}"></button>`).join('')}
           <input type="color" id="accentPick" title="Pick any color"><button class="btn" data-accent="">Theme default</button></div></div>`)
       + (IS_APP ? grp('Windows', seg('ui.startup', 'Start with Windows', [['off', 'Off'], ['normal', 'Open window'], ['tray', 'In tray'], ['amp', 'Mini amp']], 'Launch Amplite when you sign in to Windows')
-        + sw('ui.closeToTray', 'Close to tray', 'Closing the window keeps Amplite playing in the system tray')) : '')
+        + sw('ui.closeToTray', 'Close to tray', 'Closing the window keeps Amplite playing in the system tray')
+        + sw('ui.taskbar', 'Taskbar controls', 'Previous / play / next buttons on Amplite’s taskbar preview, and song progress on its taskbar icon')) : '')
       + grp('Performance', sw('ui.lite', 'Lite mode', 'Turns off animations, blur and shadows to save CPU/GPU')
         + (IS_APP ? sw('ui.hwAccel', 'Hardware acceleration', 'Turning it off can lower memory use on PCs with weak graphics; uses a bit more CPU (takes effect after restart)') : ''))
       + grp('Theme', `<div class="theme-list" id="setThemes"></div>`),
@@ -1942,6 +2246,11 @@ function settingsHTML() {
       + grp('Troubleshooting', `<div class="set-row"><div class="lbl">Restart audio engine<small>Try this if playback stops responding</small></div><button class="btn ctl" id="engRestart">Restart</button></div>
         <div class="set-row"><div class="lbl">Re-link audio engine<small>Signs the engine in again through your browser. Make sure the browser is logged into your own Spotify account.</small></div><button class="btn ctl" id="engRelink">Re-link</button></div>
         <div class="set-row"><div class="lbl">Copy diagnostics<small>Version, account type, devices and recent engine log (no passwords or tokens)</small></div><button class="btn ctl" id="engDiag">Copy</button></div>`),
+    connect: grp('Last.fm', `<div id="lfmBox"></div>`)
+      + grp('Discord', sw('ui.discord', 'Show what you’re listening to', 'Your Discord profile shows “Listening to …” with the song, artist and cover while music plays')
+        + `<div class="set-row"><div class="lbl">Discord application ID<small>Discord needs an app to show the status under. Create one named <b>Amplite</b> at <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">discord.com/developers/applications</a> → <b>New Application</b>, then copy its <b>Application ID</b> here.</small></div>
+          <div class="ctl"><input class="set-text" id="discordId" placeholder="Application ID" spellcheck="false" autocomplete="off" maxlength="22"></div></div>
+          <div class="set-row"><div class="lbl">Status</div><span class="muted" id="discordState">Off</span></div>`),
     about: `<div class="about-logo"><span class="logo" data-logo></span><div><b>Amplite</b><span class="muted" id="aboutVer"></span></div></div>`
       + grp('Spotify app', `<div class="set-row"><div class="lbl">${ownClientId() ? `Your own app (…${esc(clientId().slice(-6))})` : 'Built-in app'}<small>The Spotify developer app Amplite signs in through. Use your own so you don’t need to be on anyone else’s user list.</small></div><button class="btn ctl" id="cidChange">Change</button></div>`)
       + (IS_APP ? grp('Updates', `<div class="set-row"><div class="lbl">Check for updates<small>Amplite also checks automatically</small></div><button class="btn ctl" id="aboutUpd">Check now</button></div>`) : '')
@@ -1983,11 +2292,53 @@ function previewAmp(on) {
   }
 }
 
+/* ---- Connections: Discord + Last.fm ---- */
+const DISCORD_TEXT = {
+  off: 'Off', 'needs-id': 'Add your Discord application ID above', connecting: 'Connecting…',
+  waiting: 'Waiting for Discord (open the Discord desktop app)', connected: 'Connected — your status updates while music plays',
+};
+function renderDiscord(st = 'off') {
+  const el = $('#discordState'); if (!el) return;
+  el.textContent = DISCORD_TEXT[st] || (st.startsWith('error') ? 'Discord said: ' + st.slice(7) : st);
+  el.classList.toggle('bad', st.startsWith('error'));
+  const id = $('#discordId'); if (id && document.activeElement !== id) id.value = CFG.ui.discordAppId || '';
+}
+async function renderLastfm(st, editing = false) {
+  const box = $('#lfmBox'); if (!box) return;
+  if (!st) st = (await window.amplite.lastfm('state')).state;
+  const row = (l, c) => `<div class="set-row"><div class="lbl">${l}</div>${c}</div>`;
+  if (st.connected && !editing) {
+    box.innerHTML = row(`Connected as <b><a href="https://www.last.fm/user/${encodeURIComponent(st.user)}" target="_blank" rel="noopener">${esc(st.user)}</a></b><small>Songs count after half their length or 4 minutes, like Spotify’s own scrobbler.${st.queued ? ` ${st.queued} waiting to send.` : ''}</small>`,
+        `<button class="btn ctl" id="lfmDisconnect">Disconnect</button>`)
+      + `<div class="set-row"><div class="lbl">Scrobble<small>Send what you play to Last.fm</small></div><label class="switch ctl"><input type="checkbox" id="lfmOn" ${st.on ? 'checked' : ''}></label></div>`;
+    return;
+  }
+  box.innerHTML = `<p class="set-help">Last.fm needs a free API account to let apps scrobble. Create one at
+      <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">last.fm/api/account/create</a>
+      (any app name, e.g. <b>Amplite</b>; leave the callback URL empty), then paste its <b>API key</b> and <b>Shared secret</b> here.</p>
+    ${row('API key', `<div class="ctl"><input class="set-text" id="lfmKey" spellcheck="false" autocomplete="off" maxlength="40" value="${esc(st.key || '')}"></div>`)}
+    ${row('Shared secret', `<div class="ctl"><input class="set-text" id="lfmSecret" type="password" spellcheck="false" autocomplete="off" maxlength="40" placeholder="${st.hasKey ? 'saved' : ''}"></div>`)}
+    ${row(`<span id="lfmMsg" class="muted">Then sign in to Last.fm in your browser and click <b>Yes, allow access</b>.</span>`, `<button class="btn primary ctl" id="lfmConnect">Connect</button>`)}`;
+}
+async function lastfmConnect() {
+  const key = $('#lfmKey')?.value.trim(), secret = $('#lfmSecret')?.value.trim(), msg = $('#lfmMsg'), btn = $('#lfmConnect');
+  if (!/^[0-9a-f]{32}$/i.test(key || '')) { msg.textContent = 'The API key is 32 letters and numbers, shown on your Last.fm API account page.'; return; }
+  if (secret && !/^[0-9a-f]{32}$/i.test(secret)) { msg.textContent = 'The shared secret is 32 letters and numbers, shown under the API key.'; return; }
+  const st0 = (await window.amplite.lastfm('state')).state;
+  if (!secret && !(st0.hasKey && st0.key === key)) { msg.textContent = 'Paste the shared secret too.'; return; }
+  btn.disabled = true; msg.innerHTML = 'Opening Last.fm in your browser… click <b>Yes, allow access</b> there.';
+  const r = await window.amplite.lastfm('connect', secret ? { key, secret } : {});
+  btn.disabled = false;
+  if (r.ok) { renderLastfm(r.state); toast(`Last.fm connected as ${r.state.user}`); }
+  else if ($('#lfmMsg')) $('#lfmMsg').textContent = r.error;
+}
+
 function showTab(tab) {
   $$('#setTabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $$('.set-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === tab));
   previewAmp(tab === 'amp');
   if (tab === 'audio') renderEngine();
+  if (tab === 'connect') { renderLastfm(); window.amplite.discordStatus().then(renderDiscord); }
 }
 
 function openSettings(tab = 'general') {
@@ -2033,11 +2384,16 @@ function bindSettings(root) {
     if (e.target.closest('#aboutUpd')) { $('#updBtn').click(); return; }
     if (e.target.closest('#cidChange')) { store.set('openSetup', true); logout(); return; }
     if (e.target.closest('#engDiag')) { copyDiagnostics(); return; }
+    if (e.target.closest('#lfmConnect')) { lastfmConnect(); return; }
+    if (e.target.closest('#lfmDisconnect')) { window.amplite.lastfm('disconnect').then(r => renderLastfm(r.state)); return; }
+    if (e.target.closest('#lfmEdit')) { renderLastfm(null, true); return; }
     if (e.target.closest('#engRetry')) { store.del(refusedKey()); store.del(webKey()); S.lastMode = playMode(); window.amplite.engineRestart(); renderEngine(); updatePlayerUI(); toast('Trying the built-in engine again…'); }
   });
   root.addEventListener('change', e => {
     const el = e.target;
     if (el.dataset.k && el.type === 'checkbox') setK(el.dataset.k, el.checked);
+    if (el.id === 'discordId') setK('ui.discordAppId', el.value.trim());
+    if (el.id === 'lfmOn') window.amplite.lastfm('on', { on: el.checked }).then(r => renderLastfm(r.state));
   });
   root.addEventListener('input', e => {
     const el = e.target;
@@ -2164,6 +2520,8 @@ async function boot() {
     document.documentElement.classList.add('is-app');
     window.amplite.onMedia(cmd => ({ toggle: togglePlay, next, prev, stop, amp: toggleAmp })[cmd]?.());
     window.amplite.onWindowVisible?.(onWinVisibility);
+    window.amplite.onDiscord?.(renderDiscord);
+    window.amplite.onLastfm?.(st => { if (!st.waiting) renderLastfm(st); });
     $('[data-amp="popout"]').remove();
     $('[data-amp="close"]').title = 'Back to full player';
     $('.amp-hint').textContent = '';
@@ -2200,7 +2558,7 @@ async function boot() {
 
   updatePlayerUI();
   if (S.me.product && S.me.product !== 'premium') toast('Heads up: Spotify only allows playback in Amplite on Premium accounts. You can still browse.');
-  renderPins(); bindPins(); bindCtx(); bindDrawer(); bindAddSongs();
+  renderPins(); bindPins(); bindCtx(); bindDrawer(); bindAddSongs(); bindPlDialog(); bindDrag();
   await loadPlaylists();
   navigate('home');
   if (IS_APP) initEngine(); else initSDK();
