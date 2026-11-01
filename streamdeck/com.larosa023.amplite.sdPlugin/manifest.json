@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "Amplite",
+  "Version": "1.0.0.0",
+  "Author": "larosa023",
+  "Description": "Now playing from Amplite on your Stream Deck: album cover, song, artist and progress on the Stream Deck + touch strip, with play/pause, next, volume and seek on the dial.",
+  "UUID": "com.larosa023.amplite",
+  "Category": "Amplite",
+  "CategoryIcon": "imgs/plugin/category-icon",
+  "Icon": "imgs/plugin/marketplace",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "24",
+    "Debug": "disabled"
+  },
+  "Actions": [
+    {
+      "Name": "Now Playing",
+      "UUID": "com.larosa023.amplite.nowplaying",
+      "Icon": "imgs/actions/nowplaying/icon",
+      "Tooltip": "What Amplite is playing. Dial: turn for volume, press to play/pause, hold for next song. On a key: the album cover, press to play/pause.",
+      "PropertyInspectorPath": "ui/nowplaying.html",
+      "Controllers": [
+        "Encoder",
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "Encoder": {
+        "layout": "layouts/nowplaying.json",
+        "TriggerDescription": {
+          "Rotate": "Volume (or seek / skip)",
+          "Push": "Play / pause · hold: next",
+          "Touch": "Play / pause",
+          "LongTouch": "Next song"
+        }
+      },
+      "States": [
+        {
+          "Image": "imgs/actions/nowplaying/key",
+          "ShowTitle": false
+        }
+      ]
+    }
+  ]
+}

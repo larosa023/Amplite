@@ -256,8 +256,20 @@ function configure(p = {}) {
   if ('discord' in p || 'discordAppId' in p) discordConfig({ on: p.discord ?? discord.on, appId: p.discordAppId ?? discord.appId });
 }
 
+// For the Stream Deck plugin (and anything else local): the current song, with a live position.
+let extra = { volume: null, accent: '' };
+function setExtra(e = {}) { extra = { ...extra, ...e }; }
+function nowState() {
+  const t = cur.track;
+  return {
+    ok: true, playing: !!t && !cur.paused, paused: !t || cur.paused, ...extra,
+    track: t ? { uri: t.uri, title: t.title, artist: t.artist, album: t.album, image: t.image, duration: t.duration } : null,
+    position: Math.round(position()), at: Date.now(),
+  };
+}
+
 module.exports = {
-  init, configure, update,
+  init, configure, update, setExtra, nowState,
   discordStatus: () => discord.status, onDiscord: f => { discordListener = f; },
   lastfm: { state: lfmState, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
   shutdown() { try { if (discord.sock) { frame(1, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: crypto.randomUUID() }); discord.sock.end(); } } catch {} },

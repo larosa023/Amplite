@@ -47,6 +47,7 @@ function startServer() {
     const server = http.createServer((req, res) => {
       try {
         const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+        if (url.pathname.startsWith('/api/')) return handleApi(req, res, url);
         let file = path.normalize(path.join(ROOT, decodeURIComponent(url.pathname)));
         if (file !== ROOT && !file.startsWith(ROOT + path.sep)) { res.writeHead(403); return res.end(); }
         let st = null; try { st = fs.statSync(file); } catch {}
@@ -65,6 +66,31 @@ function startServer() {
     server.once('error', reject);
     server.listen(PORT, '127.0.0.1', () => resolve(server));
   });
+}
+
+// Local API for the Stream Deck plugin. Only apps on this PC can use it: wrong Host (DNS rebinding)
+// and any web page (they always send an Origin header) are refused, and commands need a custom header
+// that browsers can't send cross-site without permission.
+const API_CMDS = /^(toggle|next|prev|like|vol:[+-]\d{1,3}|seek:[+-]\d{1,7})$/;
+function handleApi(req, res, url) {
+  const json = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
+  const host = (req.headers.host || '').toLowerCase();
+  if (host !== `127.0.0.1:${PORT}` && host !== `localhost:${PORT}`) return json(403, { ok: false });
+  if (req.headers.origin) return json(403, { ok: false });
+  if (url.pathname === '/api/now' && req.method === 'GET') return json(200, { ...integrations.nowState(), version: app.getVersion() });
+  if (url.pathname === '/api/cmd' && req.method === 'POST') {
+    if (req.headers['x-amplite'] !== '1') return json(403, { ok: false });
+    let body = '';
+    req.on('data', c => { body += c; if (body.length > 200) req.destroy(); });
+    req.on('end', () => {
+      let cmd = ''; try { cmd = JSON.parse(body).cmd; } catch {}
+      if (!API_CMDS.test(cmd || '')) return json(400, { ok: false });
+      mainWin?.webContents.send('media', cmd);
+      json(200, { ok: true });
+    });
+    return;
+  }
+  json(404, { ok: false });
 }
 
 function loadBounds() {
@@ -371,6 +397,7 @@ function initUpdater() {
   setTimeout(check, 5000);
   setInterval(check, 4 * 60 * 60 * 1000);
 }
+ipcMain.on('player-extra', (_e, x = {}) => integrations.setExtra({ volume: typeof x.volume === 'number' ? x.volume : null, accent: /^#[0-9a-f]{6}$/i.test(x.accent || '') ? x.accent : '' }));
 ipcMain.handle('discord-status', () => integrations.discordStatus());
 ipcMain.handle('lastfm', async (_e, action, a = {}) => {
   const L = integrations.lastfm;

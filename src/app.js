@@ -787,7 +787,16 @@ function tickBar() {
   if (!S.seeking) { setText(TB.cur, fmt(p)); setRange(TB.seek, d ? p / d : 0); }
   setText(TB.dur, fmt(d));
 }
+// Volume + accent for the Stream Deck plugin (only sent when they change).
+function sendExtra() {
+  if (!IS_APP) return;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const key = Math.round(S.volume * 100) + accent;
+  if (key === S.extraKey) return; S.extraKey = key;
+  window.amplite.playerExtra?.({ volume: Math.round(S.volume * 100), accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '' });
+}
 function syncVolume() {
+  sendExtra();
   setRange($('#vol'), S.volume);
   setRange(A.vol, S.volume);
   setIcon($('#muteBtn'), S.volume === 0 ? 'mute' : 'volume');
@@ -2169,6 +2178,7 @@ function applyAccent() {
     if (/^#[0-9a-f]{6}$/i.test(a || '')) { st.setProperty('--accent', a); st.setProperty('--on-accent', onAccent(a)); }
     else { st.removeProperty('--accent'); st.removeProperty('--on-accent'); }
   }
+  sendExtra();
 }
 function applyUI() {
   applyAccent();
@@ -2518,7 +2528,13 @@ async function boot() {
   if (IS_APP) {
     try { S.appVersion = (await window.amplite.info()).version; } catch {}
     document.documentElement.classList.add('is-app');
-    window.amplite.onMedia(cmd => ({ toggle: togglePlay, next, prev, stop, amp: toggleAmp })[cmd]?.());
+    window.amplite.onMedia(cmd => {
+      // From the tray, media keys and the Stream Deck plugin: "vol:+5" = volume +5 %, "seek:-10000" = back 10 s.
+      const m = /^(vol|seek):([+-]\d+)$/.exec(cmd);
+      if (m && m[1] === 'vol') { setVolume(S.volume + +m[2] / 100); syncVolume(); return; }
+      if (m && m[1] === 'seek') { if (S.now?.duration) seek(Math.max(0, Math.min(S.now.duration - 1000, pos() + +m[2]))); return; }
+      ({ toggle: togglePlay, next, prev, stop, amp: toggleAmp, like: toggleLike })[cmd]?.();
+    });
     window.amplite.onWindowVisible?.(onWinVisibility);
     window.amplite.onDiscord?.(renderDiscord);
     window.amplite.onLastfm?.(st => { if (!st.waiting) renderLastfm(st); });

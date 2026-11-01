@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/layout.json",
+  "id": "com.larosa023.amplite.layout.nowplaying",
+  "items": [
+    { "key": "bg", "type": "pixmap", "rect": [0, 0, 200, 100], "zOrder": 0, "background": "0:#1b1e25,1:#0c0d10" },
+    { "key": "art", "type": "pixmap", "rect": [10, 12, 76, 76], "zOrder": 1, "value": "imgs/layout/placeholder.png" },
+    { "key": "paused", "type": "pixmap", "rect": [10, 12, 76, 76], "zOrder": 2, "value": "imgs/layout/paused.png", "enabled": false },
+    { "key": "title", "type": "text", "rect": [96, 13, 98, 22], "zOrder": 1, "value": "Amplite", "alignment": "left", "color": "#ffffff", "font": { "size": 16, "weight": 600 }, "text-overflow": "ellipsis" },
+    { "key": "artist", "type": "text", "rect": [96, 36, 98, 18], "zOrder": 1, "value": "", "alignment": "left", "color": "#a3a9b6", "font": { "size": 13, "weight": 400 }, "text-overflow": "ellipsis" },
+    { "key": "bar", "type": "bar", "rect": [96, 64, 96, 6], "zOrder": 1, "subtype": 0, "border_w": 0, "bar_bg_c": "#30353f", "bar_fill_c": "#ffffff", "range": { "min": 0, "max": 1000 }, "value": 0 },
+    { "key": "elapsed", "type": "text", "rect": [96, 74, 48, 14], "zOrder": 1, "value": "", "alignment": "left", "color": "#8d94a2", "font": { "size": 11, "weight": 500 } },
+    { "key": "total", "type": "text", "rect": [144, 74, 48, 14], "zOrder": 1, "value": "", "alignment": "right", "color": "#8d94a2", "font": { "size": 11, "weight": 500 } }
+  ]
+}

@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('amplite', {
   setPrefs: p => ipcRenderer.send('prefs', p),
   startupMode: () => ipcRenderer.invoke('startup-mode'),
   nowPlaying: n => ipcRenderer.send('now-playing', n),
+  playerExtra: x => ipcRenderer.send('player-extra', x),
   lyrics: q => ipcRenderer.invoke('lyrics', q),
   engineRestart: opts => ipcRenderer.send('engine-restart', opts),
   engineStop: () => ipcRenderer.send('engine-stop'),

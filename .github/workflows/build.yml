@@ -57,12 +57,25 @@ jobs:
       - run: npm ci
       - name: Build installer + portable zip
         run: npx electron-builder --win nsis zip --x64 --publish never
+      - name: Build Stream Deck plugin
+        shell: bash
+        run: |
+          V=$(node -p "require('./package.json').version")
+          cd streamdeck
+          npm ci
+          # Stream Deck wants a 4-part version; keep it in step with Amplite's.
+          node -e "const f='com.larosa023.amplite.sdPlugin/manifest.json',m=require('./'+f);m.Version='$V.0';require('fs').writeFileSync(f,JSON.stringify(m,null,2))"
+          npm run build
+          npx streamdeck validate com.larosa023.amplite.sdPlugin
+          npx streamdeck pack com.larosa023.amplite.sdPlugin --output ../dist --force
+          mv ../dist/com.larosa023.amplite.streamDeckPlugin ../dist/Amplite-StreamDeck.streamDeckPlugin
       - uses: actions/upload-artifact@v4
         with:
           name: Amplite-Windows
           path: |
             dist/*.exe
             dist/*.zip
+            dist/*.streamDeckPlugin
             dist/latest.yml
       - name: Read version
         id: ver
@@ -78,8 +91,11 @@ jobs:
           body: |
             **Download `Amplite-Setup-${{ steps.ver.outputs.v }}.exe` below and run it.**
             First time? Add `http://127.0.0.1:43821/callback` as a Redirect URI in your Spotify developer dashboard.
+
+            **Stream Deck:** download `Amplite-StreamDeck.streamDeckPlugin` and double-click it to install the Now Playing plugin.
           files: |
             dist/*.exe
             dist/*.exe.blockmap
             dist/*.zip
+            dist/*.streamDeckPlugin
             dist/latest.yml

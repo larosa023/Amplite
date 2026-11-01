@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Now Playing</title>
+  <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+</head>
+<body>
+  <sdpi-item label="Dial turns">
+    <sdpi-select setting="dial" default="volume">
+      <option value="volume">Volume</option>
+      <option value="seek">Seek (5 s per notch)</option>
+      <option value="skip">Skip songs</option>
+    </sdpi-select>
+  </sdpi-item>
+  <sdpi-item label="Volume step">
+    <sdpi-range setting="volStep" min="1" max="10" step="1" default="2" showlabels></sdpi-range>
+  </sdpi-item>
+  <sdpi-item label="Long song names">
+    <sdpi-checkbox setting="scroll" default="true" label="Scroll them"></sdpi-checkbox>
+  </sdpi-item>
+  <sdpi-item label="Progress bar">
+    <sdpi-select setting="barColor" default="white">
+      <option value="white">White</option>
+      <option value="accent">Amplite accent color</option>
+    </sdpi-select>
+  </sdpi-item>
+  <sdpi-item label="">
+    <p style="font-size:11px;opacity:.7;margin:0">Press: play / pause · hold: next song. Touch strip: tap to play / pause, long touch for next. Amplite has to be running (press to open it).</p>
+  </sdpi-item>
+</body>
+</html>

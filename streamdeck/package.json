@@ -1,0 +1,16 @@
+{
+  "name": "amplite-streamdeck",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/plugin.js --bundle --platform=node --format=esm --target=node20 --minify --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=com.larosa023.amplite.sdPlugin/bin/plugin.js && node -e \"require('fs').writeFileSync('com.larosa023.amplite.sdPlugin/bin/package.json','{\\\"type\\\":\\\"module\\\"}')\"",
+    "pack": "streamdeck pack com.larosa023.amplite.sdPlugin --output ../dist --force"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "3.0.4"
+  },
+  "devDependencies": {
+    "@elgato/cli": "1.10.4",
+    "esbuild": "0.28.2"
+  }
+}

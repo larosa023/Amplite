@@ -43,6 +43,15 @@ Amplite signs in through a Spotify developer app. Spotify only lets 5 people use
 
 You can change it later in **Settings → About → Spotify app**. Spotify Premium is required. No client secret is needed.
 
+## Stream Deck (optional)
+
+Each release includes **Amplite-StreamDeck.streamDeckPlugin**. Double-click it to install, then drag **Amplite → Now Playing** onto a dial of your Stream Deck + (or onto a key).
+
+- **Touch strip:** album cover, song, artist, a progress bar and elapsed / total time. A pause sign shows over the cover while paused.
+- **Dial:** turn for volume (or seek / skip songs; set it in the action's settings), press to play/pause, hold for the next song. Tap the strip to play/pause, long-touch for next.
+- **Key:** shows the album cover; press to play/pause, hold for next.
+- If Amplite isn't running, pressing it opens Amplite. The plugin only talks to Amplite on your PC (`127.0.0.1:43821`), and needs Stream Deck 7.1 or newer.
+
 ## Last.fm and Discord (optional)
 
 - **Last.fm:** create a free API account at [last.fm/api/account/create](https://www.last.fm/api/account/create) (any name, callback URL empty). In **Settings → Connections**, paste its API key and shared secret, click **Connect**, and approve in your browser. Songs scrobble after half their length or 4 minutes; scrobbles made offline are sent later.
@@ -99,6 +108,7 @@ Every push to `main` builds the installer on GitHub Actions and publishes it as 
 | Path | What it is |
 |---|---|
 | `main.js` | Desktop shell: window, local login server, mini amp window, media keys, updater |
+| `streamdeck/` | The Stream Deck plugin (Now Playing on the Stream Deck + touch strip / keys) |
 | `integrations.js` | Taskbar buttons/progress, Discord status, Last.fm scrobbling |
 | `engine.js` | Runs the bundled librespot audio engine (320 kbps) |
 | `preload.js` | Safe bridge between the shell and the UI |
