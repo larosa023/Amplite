@@ -285,7 +285,11 @@ const S = {
 // Where audio comes from: the bundled engine, or the official Spotify app (fallback for
 // accounts Spotify refuses to give engine decryption keys to).
 const refusedKey = () => 'keyRefused:' + (S.me?.id || '');
-const engineRefused = () => !!store.get(refusedKey(), false);
+const workedKey = () => 'engineWorked:' + (S.me?.id || '');
+// A refusal is remembered for 3 days, then the built-in engine gets another try (it's the better
+// player, and a refusal can be a false alarm). Old "true" flags from before this rule count as expired.
+const REFUSAL_MS = 3 * 864e5;
+const engineRefused = () => { const v = store.get(refusedKey(), 0); return typeof v === 'number' && Date.now() - v < REFUSAL_MS; };
 // The in-app web player (Spotify's official Web Playback SDK + Widevine) only works once the
 // app is castLabs VMP-signed; remember per app version whether Spotify rejected it.
 const webKey = () => 'webBlocked:' + (S.appVersion || '?');
@@ -556,8 +560,11 @@ function initEngine() {
       const prob = accountProblem();
       if (prob?.kind === 'mismatch') { toast('The audio engine is signed into a different Spotify account.'); openSettings('audio'); }
     }
-    if (st.keyRefused && CFG.audio.source === 'auto' && !engineRefused() && S.me?.id && (!st.user || st.user.toLowerCase() === S.me.id.toLowerCase())) {
-      store.set(refusedKey(), true); S.lastMode = playMode();
+    const sameUser = S.me?.id && (!st.user || st.user.toLowerCase() === S.me.id.toLowerCase());
+    // Once the engine has played a song for this account, it isn't a refused account.
+    if (st.okTracks > 0 && sameUser && !store.get(workedKey())) { store.set(workedKey(), true); store.del(refusedKey()); }
+    if (st.keyRefused && CFG.audio.source === 'auto' && !engineRefused() && sameUser && !store.get(workedKey())) {
+      store.set(refusedKey(), Date.now()); S.lastMode = playMode();
       toast(webBlocked() ? 'Spotify won’t let the built-in engine play for this account — switching to the Spotify app.' : 'Spotify won’t let the built-in engine play for this account — switching to Amplite’s web player.');
       window.amplite.engineStop();
       if (S.now && S.now.device === st.name) playHere();

@@ -29,6 +29,8 @@ class Engine {
     this.junk = 0;             // undecodable-audio warnings for the current track
     this.keyFails = 0;         // tracks Spotify refused to give a decryption key for
     this.keyRefused = false;   // true once Spotify has clearly refused keys to this account
+    this.okTracks = 0;         // songs that loaded with a key this run: proof the account isn't refused
+    this.curKeyFailed = false; // the song being loaded right now had a key problem
   }
 
   configure({ volume, bitrate, normalise } = {}) {
@@ -62,7 +64,7 @@ class Engine {
     this.send(this.status());
   }
 
-  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin, user: this.user, running: !!this.proc, keyRefused: this.keyRefused, keyFails: this.keyFails, format: this.format, streamKbps: this.format ? +(this.format.match(/(\d+)$/) || [])[1] || null : null }; }
+  status() { return { state: this.state, detail: this.detail, name: DEVICE_NAME, bitrate: this.bitrate, normalise: this.normalise, hasLogin: this.hasLogin, user: this.user, running: !!this.proc, keyRefused: this.keyRefused, keyFails: this.keyFails, okTracks: this.okTracks, format: this.format, streamKbps: this.format ? +(this.format.match(/(\d+)$/) || [])[1] || null : null }; }
 
   // Collapses repeats (e.g. thousands of decoder warnings) so the diagnostics stay readable.
   log(line) {
@@ -123,10 +125,12 @@ class Engine {
         this.format = line.match(/Amplite format: (\w+)/)[1]; this.junk = 0;
         this.send(this.status());
       }
+      else if (/Loading <.*> with Spotify URI/.test(line)) this.curKeyFailed = false;
+      else if (/<.*> \(\d+ ms\) loaded/.test(line)) { if (!this.curKeyFailed) { this.okTracks++; if (this.okTracks === 1) this.send(this.status()); } }
       else if (/symphonia_bundle_mp3.*(skipping junk|invalid mpeg)/i.test(line)) {
         if (++this.junk === 40) { this.log('!!! Amplite: this track came as an MP3 the engine could not decode (it will be skipped).'); this.keyFail(); }
       }
-      else if (/error audio key|Unable to load key|audio key (response )?(error|timeout)|refused the audio key/i.test(line)) this.keyFail();
+      else if (/error audio key|Unable to load key|audio key (response )?(error|timeout)|refused the audio key/i.test(line)) { this.curKeyFailed = true; this.keyFail(); }
       else if (/PremiumAccountRequired|premium account required|requires? (a )?premium/i.test(line)) this.set('error', 'This Spotify account isn’t Premium. Spotify only allows playback in apps like Amplite on Premium accounts.');
       else if (/Failed to get Spotify access token|Bad credentials|Login failed/i.test(line)) this.set('error', line.replace(/^.*?\]\s*/, '').slice(0, 160));
       if (process.env.AMPLITE_ENGINE_DEBUG) console.log('[engine]', line);
@@ -156,9 +160,11 @@ class Engine {
   // Resolves once the process has really exited (Windows can take a moment).
   // Spotify sometimes refuses decryption keys to librespot for certain Premium accounts
   // (librespot #1649 / #1735). After two refused tracks we tell the UI to switch to the Spotify app.
+  // A refused account never gets a single key, so once any song has loaded properly, later key
+  // errors are just network hiccups (or a second engine fighting this one) and don't count.
   keyFail() {
     this.keyFails++;
-    if (this.keyFails >= 2 && !this.keyRefused) { this.keyRefused = true; this.log('!!! Amplite: Spotify is refusing audio keys for this account; switching to the Spotify app.'); }
+    if (this.keyFails >= 2 && this.okTracks === 0 && !this.keyRefused) { this.keyRefused = true; this.log('!!! Amplite: Spotify is refusing audio keys for this account; switching to the Spotify app.'); }
     this.send(this.status());
   }
 
