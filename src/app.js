@@ -1053,8 +1053,10 @@ async function viewPlaylist(el, id, alive) {
     extra: editable ? `<button class="pin-btn" data-add-songs title="Add songs to this playlist">${svg('plus')}<span>Add songs</span></button>` : '',
     extra2: canEdit(pl) && pl.owner?.id === S.me?.id ? `<button class="pin-btn icon-only" data-edit-pl title="Rename, change description or delete">${svg('edit')}</button>` : '',
   }) + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri, removable: editable })
-    : editable ? `<div class="empty small"><p>This playlist is empty.</p><button class="pill-btn" data-add-songs>${svg('plus')} Add songs</button></div>` : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`;
+    : editable ? `<div class="empty small"><p>This playlist is empty.</p><button class="pill-btn" data-add-songs>${svg('plus')} Add songs</button></div>` : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`
+    + (tracks.length ? `<section class="recs pad" id="recs" data-pl="${esc(pl.id)}"></section>` : '');
   initListTools();
+  if (tracks.length) initRecs(pl.id);
 }
 
 async function viewAlbum(el, id, alive) {
@@ -1508,6 +1510,130 @@ function bindAddSongs() {
     if (e.target.closest('[data-as-more]')) return addSearch(true);
   });
   m.addEventListener('dblclick', e => { const r = e.target.closest('[data-as]'); if (r && !e.target.closest('button')) { const t = AS.results[+r.dataset.as]; if (t) playUris([t.uri]); } });
+}
+
+// ---- suggestions under each playlist ----
+// Spotify no longer gives new apps recommendations, so: Last.fm "similar songs" for a few songs in
+// the playlist (when a Last.fm API key is set in Settings → Connections), looked up on Spotify.
+// Without Last.fm: more songs from the playlist's own artists. Loads only when scrolled into view.
+const REC = { byPl: new Map(), seq: 0 };
+const recKey = (artist, title) => ((artist || '') + '|' + (title || '')).toLowerCase()
+  .replace(/\s*[([].*?[)\]]/g, '').replace(/\s+-\s+.*$/, '').replace(/\s+(feat|ft)\..*$/, '').replace(/[^\p{L}\p{N}|]+/gu, '');
+const sameArtist = (a, b) => { const x = recKey(a, ''), y = recKey(b, ''); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
+// Last.fm name → Spotify track, remembered across launches (saves searches).
+function recMap() { REC.map ??= store.get('recmap', {}) || {}; return REC.map; }
+function recMapSave() { const m = recMap(), k = Object.keys(m); if (k.length > 600) k.slice(0, k.length - 500).forEach(x => delete m[x]); clearTimeout(REC.saveT); REC.saveT = setTimeout(() => store.set('recmap', m), 1000); }
+const slim = t => t && { uri: t.uri, id: t.id, name: t.name, artists: t.artists.map(a => ({ name: a.name, id: a.id })), album: t.album, duration: t.duration, playable: t.playable };
+async function resolveRec(artist, title) {
+  const k = recKey(artist, title), m = recMap();
+  if (k in m) return m[k];
+  let hit = null;
+  try {
+    const d = await api('/search', { query: { q: `track:"${title.replace(/"/g, '')}" artist:"${artist.replace(/"/g, '')}"`, type: 'track', limit: 3 } });
+    const items = (d.tracks?.items || []).map(norm).filter(Boolean);
+    hit = items.find(t => t.playable && t.artists.some(a => sameArtist(a.name, artist))) || null;
+  } catch (e) { if (e.status === 429) return null; }
+  m[k] = slim(hit); recMapSave();
+  return m[k];
+}
+async function artistPicks(name, have, n = 3, offset = 0) {
+  try {
+    const d = await api('/search', { query: { q: `artist:"${name.replace(/"/g, '')}"`, type: 'track', limit: 10, offset } });
+    return (d.tracks?.items || []).map(norm).filter(t => t && t.playable && t.artists.some(a => sameArtist(a.name, name)) && !have(t)).slice(0, n);
+  } catch { return []; }
+}
+// Run async jobs a few at a time.
+async function pool(items, n, fn) { const out = []; let i = 0; await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) { const j = i++; out[j] = await fn(items[j]); } })); return out; }
+
+async function buildRecs(id) {
+  const L = S.lists[0], st = REC.byPl.get(id); if (!L) return null;
+  const tracks = L.orig, round = st?.round || 0, off = (round % 5) * 10; // each Refresh digs further into artists' songs
+  const seen = new Set([...tracks.map(t => t.uri), ...(st?.shown || [])]);
+  const seenKey = new Set(tracks.map(t => recKey(t.artists[0]?.name, t.name)));
+  const have = t => seen.has(t.uri) || seenKey.has(recKey(t.artists[0]?.name, t.name));
+  // Seeds: a few recent additions plus a random handful (different every refresh).
+  const shuffled = [...tracks].filter(t => t.artists[0]?.name).sort(() => Math.random() - 0.5);
+  const recent = [...tracks].filter(t => t.added).sort((a, b) => (b.added || '').localeCompare(a.added || '')).slice(0, 2);
+  const seeds = [...new Set([...recent, ...shuffled])].slice(0, 6);
+  const counts = new Map(); tracks.forEach(t => { const a = t.artists[0]?.name; if (a) counts.set(a, (counts.get(a) || 0) + 1); });
+  const topArtists = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(x => x[0]);
+  const picks = [], perArtist = new Map();
+  const take = t => {
+    if (!t || have(t) || picks.length >= 16) return;
+    const a = recKey(t.artists[0]?.name, ''); if ((perArtist.get(a) || 0) >= 2) return; // keep it varied
+    perArtist.set(a, (perArtist.get(a) || 0) + 1); seen.add(t.uri); seenKey.add(recKey(t.artists[0]?.name, t.name)); picks.push(t);
+  };
+  let source = 'artists';
+  const r = IS_APP ? await window.amplite.lastfm('similar', { tracks: seeds.map(t => ({ artist: t.artists[0].name, title: t.name })), artists: topArtists.slice(0, 3) }).catch(() => null) : null;
+  if (r?.ok && (r.similar.tracks.length || r.similar.artists.length)) {
+    source = 'lastfm';
+    // Songs similar to several of the seeds rank higher.
+    const agg = new Map();
+    for (const c of r.similar.tracks) {
+      const k = recKey(c.artist, c.title); if (seenKey.has(k)) continue;
+      const a = agg.get(k) || { ...c, score: 0, n: 0 }; a.score += c.match; a.n++; agg.set(k, a);
+    }
+    const ranked = [...agg.values()].sort((a, b) => (b.n - a.n) || (b.score - a.score)).slice(0, 40);
+    const found = await pool(ranked, 4, c => resolveRec(c.artist, c.title));
+    found.forEach(take);
+    if (picks.length < 12) {
+      const arts = [...new Map(r.similar.artists.sort((a, b) => b.match - a.match).map(a => [recKey(a.name, ''), a])).values()]
+        .filter(a => !counts.has(a.name)).slice(0, 8);
+      (await pool(arts, 4, a => artistPicks(a.name, have, 1, off))).flat().forEach(take);
+    }
+  }
+  // No Last.fm (or nothing found): more from the artists already in the playlist.
+  if (picks.length < 6) {
+    const lists = await pool(topArtists.slice(0, 8), 4, a => artistPicks(a, have, 3, off));
+    for (let i = 0; i < 3; i++) lists.forEach(l => take(l[i])); // interleave artists
+  }
+  return { picks, source };
+}
+const recRow = (t, i, editable) => `<div class="rec-row" data-rec="${i}">
+    <button class="rec-art" data-rec-play="${i}" title="Play">${t.album?.image ? `<img src="${esc(t.album.image)}" alt="" loading="lazy">` : `<div class="ph">${svg('music')}</div>`}${svg('play')}</button>
+    <div class="ttext"><div class="tname">${esc(t.name)}</div><div class="tartist">${artistLinks(t.artists)}</div></div>
+    <div class="talbum">${t.album?.id ? `<a data-open="album:${esc(t.album.id)}">${esc(t.album.name || '')}</a>` : esc(t.album?.name || '')}</div>
+    <span class="tdur">${fmt(t.duration)}</span>
+    ${editable ? `<button class="pin-btn rec-add" data-rec-add="${i}" title="Add to this playlist">${svg('plus')}<span>Add</span></button>` : `<button class="icon-btn" data-rec-queue="${i}" title="Add to queue">${svg('queue')}</button>`}
+  </div>`;
+function renderRecs(id) {
+  const box = $('#recs'); if (!box || box.dataset.pl !== id) return;
+  const st = REC.byPl.get(id), editable = !!S.pl?.editable;
+  const head = `<div class="recs-head"><div><h2>Recommended</h2><p class="muted">${st?.source === 'lastfm' ? 'Based on the songs in this playlist' : 'More from the artists in this playlist'}</p></div>
+    <button class="btn" data-recs-refresh ${st?.loading ? 'disabled' : ''}>${svg('refresh')} Refresh</button></div>`;
+  if (!st || st.loading) { box.innerHTML = head + '<div class="loading small"><span></span><span></span><span></span></div>'; return; }
+  const show = st.picks.slice(0, 10);
+  box.innerHTML = head + (show.length ? `<div class="recs-list">${show.map((t, i) => recRow(t, i, editable)).join('')}</div>`
+    : '<p class="muted small-note">No suggestions right now. Try Refresh.</p>')
+    + (st.source !== 'lastfm' && IS_APP ? '<p class="muted small-note">Tip: add a Last.fm API key in Settings → Connections for suggestions of similar songs by other artists.</p>' : '');
+}
+async function loadRecs(id) {
+  const seq = ++REC.seq, prev = REC.byPl.get(id);
+  REC.byPl.set(id, { ...(prev || {}), loading: true, shown: prev?.shown || [], round: prev?.round || 0 }); renderRecs(id);
+  let res = null; try { res = await buildRecs(id); } catch {}
+  if (seq !== REC.seq) return;
+  const shown = [...(prev?.shown || []), ...(res?.picks || []).slice(0, 10).map(t => t.uri)].slice(-300);
+  REC.byPl.set(id, { picks: res?.picks || [], source: res?.source || 'artists', shown, loading: false, round: (prev?.round || 0) + 1 });
+  renderRecs(id);
+}
+function initRecs(id) {
+  const box = $('#recs'); if (!box) return;
+  if (REC.byPl.get(id)?.picks) { renderRecs(id); return; } // came back to this playlist: keep what was shown
+  box.innerHTML = '<div class="recs-head"><div><h2>Recommended</h2></div></div>';
+  const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); if (box.isConnected) loadRecs(id); } }, { root: $('#view'), rootMargin: '300px' });
+  io.observe(box);
+}
+async function recAction(btn) {
+  const id = $('#recs')?.dataset.pl, st = REC.byPl.get(id); if (!st?.picks) return;
+  const i = +(btn.dataset.recAdd ?? btn.dataset.recPlay ?? btn.dataset.recQueue), t = st.picks[i]; if (!t) return;
+  if (btn.dataset.recPlay != null) return playUris([t.uri], 0);
+  if (btn.dataset.recQueue != null) return addToQueue(t.uri);
+  // Add: put it in the playlist, then slide the next suggestion in.
+  btn.disabled = true;
+  await addTracksTo({ id: S.pl.id, name: S.pl.name }, [t]);
+  if (!S.lists[0]?.orig.some(x => x.uri === t.uri)) { btn.disabled = false; return; } // failed
+  st.picks.splice(i, 1); renderRecs(id);
+  if (st.picks.length < 4) loadRecs(id);
 }
 
 // ---- mini amp playlist window (Winamp-style "PL") ----
@@ -2067,6 +2193,9 @@ function bind() {
     if (e.target.closest('[data-pin-toggle]')) { togglePin(S.heroPin); return; }
     if (e.target.closest('[data-hero-shuffle]')) { shufflePlay(); return; }
     if (e.target.closest('[data-add-songs]')) { openAddSongs(); return; }
+    if (e.target.closest('[data-recs-refresh]')) { const id = $('#recs')?.dataset.pl; if (id) loadRecs(id); return; }
+    const rb = e.target.closest('[data-rec-add], [data-rec-play], [data-rec-queue]');
+    if (rb) { recAction(rb); return; }
     if (e.target.closest('[data-edit-pl]')) { openPlDialog(S.pl); return; }
     const rm = e.target.closest('[data-rm]');
     if (rm) { e.stopPropagation(); removeRow(rm.closest('.trow')); return; }
@@ -2081,6 +2210,8 @@ function bind() {
   document.addEventListener('dblclick', e => {
     const row = e.target.closest('.trow');
     if (row && !e.target.closest('a, button')) { getSelection()?.removeAllRanges(); playRow(row); }
+    const rr = e.target.closest('.rec-row');
+    if (rr && !e.target.closest('a, button')) { getSelection()?.removeAllRanges(); const t = REC.byPl.get($('#recs')?.dataset.pl)?.picks[+rr.dataset.rec]; if (t) playUris([t.uri], 0); }
   });
   document.addEventListener('keydown', onKey);
 

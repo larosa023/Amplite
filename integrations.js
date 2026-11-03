@@ -173,6 +173,27 @@ async function lfmConnect(key, secret) {
   lfmListener(lfmState());
   throw new Error('Timed out waiting for Last.fm. Try Connect again.');
 }
+// Similar songs / artists for playlist suggestions. Read-only calls: only the API key is needed.
+async function lfmPublic(method, params) {
+  if (!lfm.key) { const e = new Error('nokey'); e.code = 'nokey'; throw e; }
+  const q = new URLSearchParams({ method, api_key: lfm.key, format: 'json', autocorrect: '1', ...params });
+  const r = await net.fetch(LFM + '?' + q, { headers: { 'User-Agent': 'Amplite/' + app.getVersion() } });
+  const j = await r.json().catch(() => ({}));
+  if (j.error) throw new Error(j.message || 'Last.fm error ' + j.error);
+  return j;
+}
+async function lfmSimilar({ tracks = [], artists = [], limit = 25 } = {}) {
+  const out = { tracks: [], artists: [] };
+  await Promise.all([
+    ...tracks.slice(0, 6).map(t => lfmPublic('track.getSimilar', { artist: t.artist, track: t.title, limit: String(limit) })
+      .then(j => (j.similartracks?.track || []).forEach(x => out.tracks.push({ title: x.name, artist: x.artist?.name || '', match: +x.match || 0, seed: t.title })))
+      .catch(() => {})),
+    ...artists.slice(0, 4).map(a => lfmPublic('artist.getSimilar', { artist: a, limit: '12' })
+      .then(j => (j.similarartists?.artist || []).forEach(x => out.artists.push({ name: x.name, match: +x.match || 0, seed: a })))
+      .catch(() => {})),
+  ]);
+  return out;
+}
 function lfmDisconnect() { connectRun++; lfm.session = ''; lfm.user = ''; lfmSave(); lfmListener(lfmState()); }
 function lfmSetOn(on) { lfm.on = !!on; lfmSave(); lfmListener(lfmState()); if (lfm.on) lfmNowPlaying(true); }
 const lfmReady = () => lfm.on && lfm.session && lfm.key && lfm.secret;
@@ -271,6 +292,6 @@ function nowState() {
 module.exports = {
   init, configure, update, setExtra, nowState,
   discordStatus: () => discord.status, onDiscord: f => { discordListener = f; },
-  lastfm: { state: lfmState, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
+  lastfm: { state: lfmState, similar: lfmSimilar, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
   shutdown() { try { if (discord.sock) { frame(1, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: crypto.randomUUID() }); discord.sock.end(); } } catch {} },
 };

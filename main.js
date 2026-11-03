@@ -403,6 +403,7 @@ ipcMain.handle('lastfm', async (_e, action, a = {}) => {
   const L = integrations.lastfm;
   try {
     if (action === 'connect') return { ok: true, state: await L.connect(a.key, a.secret) };
+    if (action === 'similar') { if (!L.state().key) return { ok: false, error: 'nokey' }; return { ok: true, similar: await L.similar(a) }; }
     if (action === 'disconnect') L.disconnect();
     if (action === 'on') L.setOn(a.on);
     return { ok: true, state: L.state() };
