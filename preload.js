@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('amplite', {
   discordStatus: () => ipcRenderer.invoke('discord-status'),
   onDiscord: cb => ipcRenderer.on('discord', (_e, s) => cb(s)),
   lastfm: (action, args) => ipcRenderer.invoke('lastfm', action, args),
+  history: (action, args) => ipcRenderer.invoke('history', action, args),
   onLastfm: cb => ipcRenderer.on('lastfm', (_e, s) => cb(s)),
   onEngine: cb => ipcRenderer.on('engine', (_e, s) => cb(s)),
 });

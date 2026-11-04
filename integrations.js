@@ -246,17 +246,67 @@ setInterval(lfmTick, 5000).unref?.();
 setInterval(() => lfmFlush(), 5 * 60000).unref?.();
 
 /* ---------------- updates from the UI ---------------- */
+/* ---------------- listening history (for Stats) ---------------- */
+// One line per song you actually listened to (30 s or more, or most of a short song), kept only on this PC.
+const HIST = 'history.jsonl';
+let held = null; // a song that briefly vanished (nothing playing); resumes if it comes back
+function commitPlay(t, ms, sync = false) {
+  if (!t || !t.uri) return;
+  const counts = ms >= 30000 || (t.duration && ms >= t.duration * 0.8 && ms >= 10000);
+  if (!counts) return;
+  const rec = { ts: Math.floor(t.firstAt / 1000), ms: Math.round(Math.min(ms, (t.duration || ms) + 5000)), uri: t.uri, title: t.title, artist: t.artist, artists: t.artists?.length ? t.artists : [t.artist],
+    artistIds: t.artistIds || [], album: t.album, albumId: t.albumId || '', image: t.image, duration: t.duration || 0 };
+  const line = JSON.stringify(rec) + '\n';
+  try { sync ? fs.appendFileSync(file(HIST), line) : fs.appendFile(file(HIST), line, () => {}); } catch {}
+}
+function readHistory() {
+  return new Promise(res => fs.readFile(file(HIST), 'utf8', (e, d) => {
+    if (e) return res([]);
+    const out = [];
+    for (const l of d.split('\n')) { if (!l) continue; try { out.push(JSON.parse(l)); } catch {} }
+    res(out);
+  }));
+}
+function appendHistory(recs) { if (recs.length) fs.appendFileSync(file(HIST), recs.map(r => JSON.stringify(r)).join('\n') + '\n'); }
+function clearHistory() { try { fs.unlinkSync(file(HIST)); } catch {} }
+// Last.fm scrobble history → the same format (no Spotify IDs; artists are matched by name).
+async function lfmRecent(page = 1) {
+  if (!lfm.user) throw new Error('Connect Last.fm first (Settings → Connections).');
+  const j = await lfmPublic('user.getRecentTracks', { user: lfm.user, limit: '200', page: String(page) });
+  const rt = j.recenttracks || {}, attr = rt['@attr'] || {};
+  const tracks = (rt.track || []).filter(t => t.date?.uts).map(t => ({
+    ts: +t.date.uts, ms: 0, uri: '', title: t.name, artist: t.artist?.['#text'] || t.artist?.name || '', artists: [t.artist?.['#text'] || t.artist?.name || ''], artistIds: [],
+    album: t.album?.['#text'] || '', albumId: '', image: (t.image || []).find(i => i.size === 'extralarge')?.['#text'] || '', duration: 0, src: 'lastfm',
+  }));
+  return { tracks, page: +attr.page || page, pages: +attr.totalPages || 1, total: +attr.total || tracks.length };
+}
+
 function update(n = {}) {
   lfmTick(); // count time up to now under the previous state
   const key = n.uri ? `${n.uri}` : '';
+  // A song that blipped out (e.g. a moment of "nothing playing") and came straight back continues as the same play.
+  if (held && n.uri) {
+    if (held.track.uri === n.uri && (n.position || 0) > 5000 && Date.now() - held.at < 120000) {
+      cur = { track: held.track, paused: true, at: n.position || 0, startedAt: Date.now() - (n.position || 0) };
+      lfm.listened = held.listened; lfm.lastTick = Date.now();
+    } else commitPlay(held.track, held.listened);
+    held = null;
+  }
   const sameTrack = cur.track && cur.track.uri === n.uri;
+  if (cur.track && (!n.uri ? true : !sameTrack)) {
+    if (!n.uri) held = { track: cur.track, listened: lfm.listened, at: Date.now() };
+    else commitPlay(cur.track, lfm.listened);
+  }
   // A replay of the same song after it finished (position jumps back near 0) counts as a new play.
   const replay = sameTrack && (n.position || 0) < 5000 && position() > Math.max(30000, (cur.track.duration || 0) - 15000);
+  if (replay) commitPlay(cur.track, lfm.listened);
   if (!n.uri) cur = { track: null, paused: true, startedAt: 0, at: 0 };
   else {
     const track = sameTrack && !replay ? cur.track : {
       uri: n.uri, key: key + '|' + Date.now(), title: n.title || '', artist: n.artist || '', album: n.album || '',
       image: n.image || '', duration: n.duration || 0, firstAt: Date.now() - (n.position || 0),
+      artistIds: Array.isArray(n.artistIds) ? n.artistIds.slice(0, 6) : [], albumId: n.albumId || '',
+      artists: Array.isArray(n.artistNames) ? n.artistNames.slice(0, 6).map(String) : [],
     };
     if (!sameTrack || replay) { lfm.listened = 0; lfm.lastTick = Date.now(); lfm.nowSent = ''; }
     cur = { track, paused: n.paused !== false, at: n.position || 0, startedAt: Date.now() - (n.position || 0) };
@@ -293,5 +343,7 @@ module.exports = {
   init, configure, update, setExtra, nowState,
   discordStatus: () => discord.status, onDiscord: f => { discordListener = f; },
   lastfm: { state: lfmState, similar: lfmSimilar, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
-  shutdown() { try { if (discord.sock) { frame(1, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: crypto.randomUUID() }); discord.sock.end(); } } catch {} },
+  history: { read: readHistory, append: appendHistory, clear: clearHistory, lastfmPage: lfmRecent, tags: a => lfmPublic('artist.getTopTags', { artist: a }).then(j => (j.toptags?.tag || []).slice(0, 8).map(t => ({ name: t.name, count: +t.count || 0 }))) },
+  shutdown() { try { lfmTick(); commitPlay(held?.track || cur.track, held ? held.listened : lfm.listened, true); held = null; } catch {}
+    try { if (discord.sock) { frame(1, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: crypto.randomUUID() }); discord.sock.end(); } } catch {} },
 };

@@ -106,7 +106,7 @@ const ICONS = {
   queue: '<path d="M3 6h13M3 12h13M3 18h9M17 15v6l5-3z"/>',
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7"/>', listadd: '<path d="M3 6h12M3 12h12M3 18h7M18 13v8M14 17h8"/>',
 };
 const svg = n => {
@@ -767,6 +767,7 @@ function updatePlayerUI() {
       S.trayKey = key;
       window.amplite.nowPlaying(n ? {
         uri: n.uri, title: n.name, artist: n.artists.map(a => a.name).join(', '), album: n.album?.name || '',
+        artistIds: n.artists.map(a => a.id || ''), artistNames: n.artists.map(a => a.name), albumId: n.album?.id || '',
         image: n.album?.image || '', duration: n.duration || 0, position: Math.round(p), paused: !!n.paused,
       } : { paused: true });
     }
@@ -810,7 +811,14 @@ function syncVolume() {
 }
 
 /* ---------------- views ---------------- */
-const VIEWS = { home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist };
+// Stats lives in its own file and loads only when opened.
+async function viewStats(el, _arg, alive) {
+  if (!IS_APP) { el.innerHTML = '<div class="pad"><p class="note">Stats are available in the desktop app.</p></div>'; return; }
+  const m = await import('./stats.js');
+  if (!alive()) return;
+  await m.viewStats(el, { api, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive });
+}
+const VIEWS = { home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
 let navToken = 0;
 
 async function navigate(name, arg = '', push = true) {
@@ -2043,6 +2051,21 @@ function startViz() {
   }, 100);
 }
 const SCROLL_MS = { slow: 380, normal: 220, fast: 110 };
+// The visualizer canvas. Drawn on the CPU (willReadFrequently): for a canvas this small that's cheaper
+// than the GPU, and it can't be wiped out by a GPU reset (sleep / wake, driver update, moving the amp
+// between windows), which used to leave a white box with a broken-image icon. If the context is lost
+// anyway, the canvas is swapped for a fresh one.
+function vizCtx() {
+  if (A.vizCtx && A.vizCtxFor === A.viz && !A.vizCtx.isContextLost?.()) return A.vizCtx;
+  if (A.vizCtx && A.vizCtxFor === A.viz) {
+    const fresh = A.viz.ownerDocument.createElement('canvas');
+    fresh.id = A.viz.id; fresh.className = A.viz.className; fresh.width = A.viz.width; fresh.style.cssText = A.viz.style.cssText; fresh.height = A.viz.height;
+    A.viz.replaceWith(fresh); A.viz = fresh;
+  }
+  A.vizCtx = A.viz.getContext('2d', { willReadFrequently: true, alpha: true });
+  A.vizCtxFor = A.viz;
+  return A.vizCtx;
+}
 function drawAmp() {
   // One clock for everything. The amp window has its own clock that starts when it opens, so mixing
   // its frame timestamps with the main window's time froze the display (it looked "in the past").
@@ -2073,7 +2096,7 @@ function drawAmp() {
   const N = V.h.length;
   // Nothing moving and nothing to decay: skip the canvas work.
   if (!playing && V.idle) return;
-  const cv = A.viz, x = cv.getContext('2d'), W = cv.width, H = cv.height;
+  const x = vizCtx(), cv = A.viz, W = cv.width, H = cv.height; if (!x) return;
   if (!S.vizGrad) {
     const cs = ampEl.ownerDocument.defaultView.getComputedStyle(ampEl), g = x.createLinearGradient(0, H, 0, 0);
     g.addColorStop(0, cs.getPropertyValue('--a-lo').trim() || '#0c0');

@@ -398,6 +398,17 @@ function initUpdater() {
   setInterval(check, 4 * 60 * 60 * 1000);
 }
 ipcMain.on('player-extra', (_e, x = {}) => integrations.setExtra({ volume: typeof x.volume === 'number' ? x.volume : null, accent: /^#[0-9a-f]{6}$/i.test(x.accent || '') ? x.accent : '' }));
+ipcMain.handle('history', async (_e, action, a = {}) => {
+  const H = integrations.history;
+  try {
+    if (action === 'read') return { ok: true, items: await H.read() };
+    if (action === 'append') { H.append((a.items || []).filter(r => r && typeof r.ts === 'number' && typeof r.title === 'string').slice(0, 20000)); return { ok: true }; }
+    if (action === 'clear') { H.clear(); return { ok: true }; }
+    if (action === 'lastfm') return { ok: true, ...(await H.lastfmPage(a.page || 1)) };
+    if (action === 'tags') return { ok: true, tags: await H.tags(a.artist) };
+  } catch (e) { return { ok: false, error: e.message }; }
+  return { ok: false };
+});
 ipcMain.handle('discord-status', () => integrations.discordStatus());
 ipcMain.handle('lastfm', async (_e, action, a = {}) => {
   const L = integrations.lastfm;
