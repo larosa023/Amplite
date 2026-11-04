@@ -42,7 +42,7 @@ async function seedFromSpotify() {
   if (C.store.get('statsSeeded')) return;
   C.store.set('statsSeeded', true);
   try {
-    const d = await C.api('/me/player/recently-played', { query: { limit: 50 } });
+    const d = await C.bgApi('/me/player/recently-played', { query: { limit: 50 } });
     const have = indexByTitle(H.items || []);
     const recs = (d?.items || []).filter(i => i.track && i.played_at).map(i => {
       const t = i.track, dur = t.duration_ms || 0;
@@ -86,15 +86,21 @@ async function importLastfm(btn) {
 function infoMap() { C._info ??= C.store.get('artinfo', {}) || {}; return C._info; }
 let infoSaveT;
 const saveInfo = () => { clearTimeout(infoSaveT); infoSaveT = setTimeout(() => { const m = infoMap(), k = Object.keys(m); if (k.length > 1500) k.slice(0, k.length - 1200).forEach(x => delete m[x]); C.store.set('artinfo', m); }, 800); };
-async function artistInfo(name, id) {
+// needPicture: only the top artists on screen need Spotify (for their photo). Genres for the rest come
+// from Last.fm when there's a key, so opening Stats costs Spotify only a handful of requests.
+async function artistInfo(name, id, needPicture = false) {
   const k = keyOf(name), m = infoMap(), have = m[k];
-  if (have && Date.now() - have.at < 30 * DAY) return have;
-  let out = { id: id || '', img: '', genres: [], at: Date.now() };
-  try {
-    let a = id ? await C.api(`/artists/${id}`) : null;
-    if (!a) { const d = await C.api('/search', { query: { q: `artist:"${name.replace(/"/g, '')}"`, type: 'artist', limit: 1 } }); a = d.artists?.items?.[0]; if (a && keyOf(a.name) !== k) a = null; }
-    if (a) out = { id: a.id, img: C.img(a.images, 160) || '', genres: (a.genres || []).slice(0, 4), at: Date.now() };
-  } catch (e) { if (e.status === 429) return have || out; }
+  if (have && Date.now() - have.at < 30 * DAY && (have.img || have.spotifyTried || !needPicture)) return have;
+  let out = { id: id || have?.id || '', img: have?.img || '', genres: have?.genres || [], at: Date.now() };
+  const useSpotify = needPicture || !C.lastfmKey;
+  if (useSpotify && !C.rateLimited()) {
+    try {
+      let a = out.id ? await C.bgApi(`/artists/${out.id}`) : null;
+      if (!a && needPicture) { const d = await C.bgApi('/search', { query: { q: `artist:"${name.replace(/"/g, '')}"`, type: 'artist', limit: 1 } }); a = d.artists?.items?.[0]; if (a && keyOf(a.name) !== k) a = null; }
+      if (a) out = { id: a.id, img: C.img(a.images, 160) || '', genres: (a.genres || []).slice(0, 4).length ? a.genres.slice(0, 4) : out.genres, at: Date.now() };
+      out.spotifyTried = true;
+    } catch (e) { if (e.status === 429) return have || out; }
+  }
   // Spotify often has no genres for an artist: Last.fm's tags (when a Last.fm key is set) fill in.
   if (!out.genres.length) {
     try {
@@ -181,7 +187,7 @@ async function genreDrift(items) {
   // look up genres for the artists that make up most of the listening (keeps it to a few dozen lookups)
   const byArtist = new Map(); win.forEach(r => { const a = artistsOf(r)[0]; if (!a) return; const k = keyOf(a); const e = byArtist.get(k) || { name: a, id: r.artistIds?.[0] || '', ms: 0 }; e.ms += playMs(r); byArtist.set(k, e); });
   const top = [...byArtist.values()].sort((a, b) => b.ms - a.ms).slice(0, 40);
-  await pool(top, 4, a => artistInfo(a.name, a.id));
+  await pool(C.lastfmKey ? top : top.slice(0, 15), 3, a => artistInfo(a.name, a.id));
   const m = infoMap(), wk = Array.from({ length: weeks }, (_, i) => ({ t: start + i * 7 * DAY, g: new Map(), total: 0 }));
   let covered = 0, all = 0;
   for (const r of win) {
@@ -355,7 +361,7 @@ async function render(skipLoad) {
   </div>`;
   // Artist pictures + genres arrive after (cached after the first time).
   const topA = d.topArtists.slice(0, 8);
-  pool(topA, 4, a => artistInfo(a.name, a.id)).then(() => {
+  pool(topA, 2, a => artistInfo(a.name, a.id, true)).then(() => {
     if (!C.alive()) return;
     const card = el.querySelector('.st-rank')?.closest('.st-card'); if (card) card.outerHTML = topArtistsHTML(d);
   });

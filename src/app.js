@@ -203,7 +203,13 @@ function swrRefresh(url, path, opts) {
   }).catch(() => {});
 }
 const purgeCache = re => { for (const k of apiCache.keys()) if (re.test(k)) apiCache.delete(k); };
-async function api(path, { method = 'GET', body, query, fresh = false } = {}, retry = true) {
+// Spotify rate limit. A 429 says how long to back off; nothing in Amplite waits that out any more.
+// Background lookups (suggestions, stats) are spaced out, and stop entirely while Spotify says to.
+const RL = { until: 0, chain: Promise.resolve(), told: 0, errors: [] };
+const rateLimited = () => Date.now() < RL.until;
+function noteApiError(status, url) { RL.errors.push(`${new Date().toLocaleTimeString()} ${status} ${url.replace('https://api.spotify.com/v1', '').split('?')[0]}`); if (RL.errors.length > 25) RL.errors.shift(); }
+function bgSlot() { const p = RL.chain.then(() => sleep(180)); RL.chain = p.catch(() => {}); return p; }
+async function api(path, { method = 'GET', body, query, fresh = false, bg = false } = {}, retry = true) {
   let url = path.startsWith('http') ? path : 'https://api.spotify.com/v1' + path;
   if (query) url += (url.includes('?') ? '&' : '?') + new URLSearchParams(query);
   if (cacheable(method, url) && !fresh) {
@@ -213,6 +219,10 @@ async function api(path, { method = 'GET', body, query, fresh = false } = {}, re
       const stale = swrGet(url);
       if (stale) { apiCache.set(url, { t: Date.now(), data: stale }); swrRefresh(url, path, { method, body, query }); return stale; }
     }
+  }
+  if (bg) {
+    if (rateLimited()) { const e = new Error('Spotify asked Amplite to slow down'); e.status = 429; throw e; }
+    await bgSlot();
   }
   const token = await getToken();
   const r = await fetch(url, {
@@ -224,13 +234,26 @@ async function api(path, { method = 'GET', body, query, fresh = false } = {}, re
     const t = store.get('token'); if (t) { t.expires_at = 0; store.set('token', t); }
     return api(path, { method, body, query }, false);
   }
-  if (r.status === 429 && retry) {
-    await sleep((+r.headers.get('Retry-After') || 1) * 1000);
-    return api(path, { method, body, query }, false);
+  if (r.status === 429) {
+    // Spotify's Retry-After often isn't readable from the app, so back off on our own too:
+    // 15 s, 30 s, 1 min … up to 10 min while the 429s keep coming.
+    RL.strikes = (RL.strikes || 0) + 1;
+    const own = Math.min(600, 15 * 2 ** (RL.strikes - 1)), told = +r.headers.get('Retry-After') || 0;
+    const wait = Math.min(Math.max(told, own), 86400);
+    RL.until = Math.max(RL.until, Date.now() + wait * 1000);
+    noteApiError(429, url);
+    if (retry && !bg && RL.strikes === 1) { await sleep(1500); return api(path, { method, body, query, fresh }, false); }
+    if (RL.strikes >= 2 && Date.now() - RL.told > 10 * 60000) {
+      RL.told = Date.now();
+      toast(`Spotify is limiting Amplite for a few minutes. Song suggestions and stats lookups wait until then.`);
+    }
+    const e = new Error('Spotify asked Amplite to slow down'); e.status = 429; e.retryAfter = wait; throw e;
   }
+  if (RL.strikes && Date.now() > RL.until) RL.strikes = 0; // calm again
   const text = await r.text();
   let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
   if (!r.ok) {
+    if (r.status >= 500 || r.status === 403) noteApiError(r.status, url);
     const e = new Error(data?.error?.message || `Spotify error ${r.status}`);
     e.status = r.status; e.reason = data?.error?.reason; throw e;
   }
@@ -247,15 +270,15 @@ async function api(path, { method = 'GET', body, query, fresh = false } = {}, re
 }
 
 // Fetch every page of a paged endpoint (a few pages in parallel).
-async function pageAll(path, query = {}, max = 1500) {
+async function pageAll(path, query = {}, max = 1500, opts = {}) {
   const limit = query.limit || 50;
-  const first = await api(path, { query: { ...query, limit, offset: 0 } });
+  const first = await api(path, { ...opts, query: { ...query, limit, offset: 0 } });
   const out = [...(first?.items || [])];
   const total = Math.min(first?.total ?? out.length, max);
   const offsets = [];
   for (let o = limit; o < total; o += limit) offsets.push(o);
   for (let i = 0; i < offsets.length; i += 4) {
-    const pages = await Promise.all(offsets.slice(i, i + 4).map(o => api(path, { query: { ...query, limit, offset: o } })));
+    const pages = await Promise.all(offsets.slice(i, i + 4).map(o => api(path, { ...opts, query: { ...query, limit, offset: o } })));
     pages.forEach(p => out.push(...(p?.items || [])));
   }
   return out;
@@ -528,6 +551,8 @@ async function copyDiagnostics() {
   try { const d = await api('/me/player/devices'); add('Devices', (d?.devices || []).map(x => `${x.name} [${x.type}${x.is_active ? ', active' : ''}${x.is_restricted ? ', restricted' : ''}]`).join(' | ') || 'none'); } catch (e) { add('Devices', 'error ' + e.message); }
   try { const p = await api('/me/player'); add('Now', p?.item ? `${p.item.name} on ${p.device?.name} (${p.is_playing ? 'playing' : 'paused'})` : 'nothing'); } catch (e) { add('Now', 'error ' + e.message); }
   add('Settings', JSON.stringify(CFG.audio) + ` · mode=${playMode()} · engineRefused=${engineRefused()} · webBlocked=${webBlocked()} · webError=${S.webLastError || '-'} · webDevice=${S.deviceId ? 'yes' : 'no'} · spotifyApp=${S.appInstalled ? 'installed' : 'not found'}`);
+  add('Spotify limits', rateLimited() ? `limited for ${Math.round((RL.until - Date.now()) / 1000)} s` : 'ok');
+  if (RL.errors.length) lines.push('--- recent Spotify errors ---', ...RL.errors);
   if (IS_APP) { try { lines.push('--- engine log ---', ...(await window.amplite.engineLogs())); } catch {} }
   const text = lines.join('\n');
   try { await navigator.clipboard.writeText(text); toast('Diagnostics copied — paste them to whoever is helping you.'); }
@@ -816,7 +841,7 @@ async function viewStats(el, _arg, alive) {
   if (!IS_APP) { el.innerHTML = '<div class="pad"><p class="note">Stats are available in the desktop app.</p></div>'; return; }
   const m = await import('./stats.js');
   if (!alive()) return;
-  await m.viewStats(el, { api, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive });
+  await m.viewStats(el, { api, bgApi: (p, o = {}) => api(p, { ...o, bg: true }), rateLimited, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive });
 }
 const VIEWS = { home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
 let navToken = 0;
@@ -1094,8 +1119,16 @@ async function viewArtist(el, id, alive) {
       : '<p class="muted">Spotify didn’t return releases for this artist — hit play to hear them.</p>'}</section></div>`;
 }
 
-async function loadPlaylists() {
-  try { S.playlists = await pageAll('/me/playlists', { limit: 50 }, 300); } catch { S.playlists = []; }
+async function loadPlaylists(fresh = false) {
+  // A failed load (offline, Spotify busy or rate-limiting) keeps the list you had and tries again later.
+  try { S.playlists = await pageAll('/me/playlists', { limit: 50 }, 300, { fresh }); }
+  catch (e) {
+    const stale = swrGet('https://api.spotify.com/v1/me/playlists?limit=50&offset=0')?.items;
+    if (!S.playlists?.length && stale?.length) S.playlists = stale;
+    clearTimeout(S.plRetryT);
+    S.plRetryT = setTimeout(() => loadPlaylists(true), Math.max(30000, RL.until - Date.now() + 1000));
+    if (!S.playlists?.length) { $('#playlists').innerHTML = '<p class="muted" style="padding:0 12px;font-size:13px">Couldn’t load your playlists. Retrying…</p>'; return; }
+  }
   $('#playlists').innerHTML = S.playlists.filter(Boolean).map(p => `<button class="pl-item" data-open="playlist:${esc(p.id)}" data-id="${esc(p.id)}" title="${esc(p.name)}" ${pinAttr({ type: 'playlist', id: p.id, uri: p.uri, name: p.name, image: img(p.images, 64) })}>
     ${img(p.images, 64) ? `<img src="${esc(img(p.images, 64))}" alt="" loading="lazy">` : `<div class="ph">${svg('music')}</div>`}
     <div class="pl-meta"><div class="pl-name">${esc(p.name)}</div><div class="pl-sub">Playlist · ${esc(p.owner?.display_name || '')}</div></div></button>`).join('')
@@ -1389,7 +1422,7 @@ function plError(e) {
   if (needsEditPermission(e)) { closePlDialog(); return; }
   $('#plErr').textContent = e.message; $('#plErr').classList.remove('hidden');
 }
-async function refreshPlaylists() { purgeCache(/\/me\/playlists/); try { store.del('swr:https://api.spotify.com/v1/me/playlists?limit=50&offset=0'); } catch {} await loadPlaylists(); }
+async function refreshPlaylists() { purgeCache(/\/me\/playlists/); await loadPlaylists(true); }
 async function savePlDialog() {
   const name = $('#plName').value.trim(), description = $('#plDesc').value.trim(), isPublic = $('#plPublic').checked;
   if (!name) { $('#plName').focus(); return; }
@@ -1537,16 +1570,16 @@ async function resolveRec(artist, title) {
   if (k in m) return m[k];
   let hit = null;
   try {
-    const d = await api('/search', { query: { q: `track:"${title.replace(/"/g, '')}" artist:"${artist.replace(/"/g, '')}"`, type: 'track', limit: 3 } });
+    const d = await api('/search', { bg: true, query: { q: `track:"${title.replace(/"/g, '')}" artist:"${artist.replace(/"/g, '')}"`, type: 'track', limit: 3 } });
     const items = (d.tracks?.items || []).map(norm).filter(Boolean);
     hit = items.find(t => t.playable && t.artists.some(a => sameArtist(a.name, artist))) || null;
-  } catch (e) { if (e.status === 429) return null; }
+  } catch (e) { return null; } // busy / rate-limited: try again another time (not remembered as "no match")
   m[k] = slim(hit); recMapSave();
   return m[k];
 }
 async function artistPicks(name, have, n = 3, offset = 0) {
   try {
-    const d = await api('/search', { query: { q: `artist:"${name.replace(/"/g, '')}"`, type: 'track', limit: 10, offset } });
+    const d = await api('/search', { bg: true, query: { q: `artist:"${name.replace(/"/g, '')}"`, type: 'track', limit: 10, offset } });
     return (d.tracks?.items || []).map(norm).filter(t => t && t.playable && t.artists.some(a => sameArtist(a.name, name)) && !have(t)).slice(0, n);
   } catch { return []; }
 }
@@ -1581,18 +1614,19 @@ async function buildRecs(id) {
       const k = recKey(c.artist, c.title); if (seenKey.has(k)) continue;
       const a = agg.get(k) || { ...c, score: 0, n: 0 }; a.score += c.match; a.n++; agg.set(k, a);
     }
+    // Look songs up a few at a time and stop as soon as there are enough (keeps Spotify requests low).
     const ranked = [...agg.values()].sort((a, b) => (b.n - a.n) || (b.score - a.score)).slice(0, 40);
-    const found = await pool(ranked, 4, c => resolveRec(c.artist, c.title));
-    found.forEach(take);
+    for (let i = 0; i < ranked.length && picks.length < 14 && !rateLimited(); i += 4)
+      (await Promise.all(ranked.slice(i, i + 4).map(c => resolveRec(c.artist, c.title)))).forEach(take);
     if (picks.length < 12) {
       const arts = [...new Map(r.similar.artists.sort((a, b) => b.match - a.match).map(a => [recKey(a.name, ''), a])).values()]
         .filter(a => !counts.has(a.name)).slice(0, 8);
-      (await pool(arts, 4, a => artistPicks(a.name, have, 1, off))).flat().forEach(take);
+      (await pool(arts.slice(0, 5), 2, a => artistPicks(a.name, have, 1, off))).flat().forEach(take);
     }
   }
   // No Last.fm (or nothing found): more from the artists already in the playlist.
   if (picks.length < 6) {
-    const lists = await pool(topArtists.slice(0, 8), 4, a => artistPicks(a, have, 3, off));
+    const lists = await pool(topArtists.slice(0, 6), 2, a => artistPicks(a, have, 3, off));
     for (let i = 0; i < 3; i++) lists.forEach(l => take(l[i])); // interleave artists
   }
   return { picks, source };
