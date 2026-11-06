@@ -820,13 +820,23 @@ function tickBar() {
   if (!S.seeking) { setText(TB.cur, fmt(p)); setRange(TB.seek, d ? p / d : 0); }
   setText(TB.dur, fmt(d));
 }
-// Volume + accent for the Stream Deck plugin (only sent when they change).
+// Volume, accent and EQ state for local apps (Stream Deck plugin, Mantel). Only sent when they change.
 function sendExtra() {
   if (!IS_APP) return;
   const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-  const key = Math.round(S.volume * 100) + accent;
+  const eq = { available: eqAvailable(), on: !!CFG.eq.enabled, preset: CFG.eq.preset || 'custom' };
+  const key = Math.round(S.volume * 100) + accent + JSON.stringify(eq);
   if (key === S.extraKey) return; S.extraKey = key;
-  window.amplite.playerExtra?.({ volume: Math.round(S.volume * 100), accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '' });
+  window.amplite.playerExtra?.({
+    volume: Math.round(S.volume * 100), accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '',
+    eq: { ...eq, presets: Object.entries(EQ_PRESETS).map(([k, [n]]) => [k, n]) },
+  });
+}
+// From the local API: "on", "off", or a preset name ("bass", "vocal", ...). Picking a preset turns the EQ on.
+function eqCommand(c) {
+  if (c === 'on' || c === 'off') { setK('eq.enabled', c === 'on'); return; }
+  if (!EQ_PRESETS[c]) return;
+  CFG.eq.gains = [...EQ_PRESETS[c][1]]; CFG.eq.enabled = true; setK('eq.preset', c);
 }
 function syncVolume() {
   sendExtra();
@@ -2314,6 +2324,7 @@ function applyEq() {
     eqT = setTimeout(() => window.amplite.setEq({ enabled: e.enabled, preamp: e.preamp - (e.auto ? boost : 0), gains: e.gains }), 60);
   }
   syncEq();
+  sendExtra();
 }
 function eqHTML() {
   return `<div class="eq-top">
@@ -2725,6 +2736,8 @@ async function boot() {
     document.documentElement.classList.add('is-app');
     window.amplite.onMedia(cmd => {
       // From the tray, media keys and the Stream Deck plugin: "vol:+5" = volume +5 %, "seek:-10000" = back 10 s.
+      const q = /^eq:([a-z]+)$/.exec(cmd);
+      if (q) { eqCommand(q[1]); return; }
       const m = /^(vol|seek):([+-]\d+)$/.exec(cmd);
       if (m && m[1] === 'vol') { setVolume(S.volume + +m[2] / 100); syncVolume(); return; }
       if (m && m[1] === 'seek') { if (S.now?.duration) seek(Math.max(0, Math.min(S.now.duration - 1000, pos() + +m[2]))); return; }

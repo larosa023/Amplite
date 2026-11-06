@@ -71,7 +71,8 @@ function startServer() {
 // Local API for the Stream Deck plugin. Only apps on this PC can use it: wrong Host (DNS rebinding)
 // and any web page (they always send an Origin header) are refused, and commands need a custom header
 // that browsers can't send cross-site without permission.
-const API_CMDS = /^(toggle|next|prev|like|vol:[+-]\d{1,3}|seek:[+-]\d{1,7})$/;
+// eq:on / eq:off / eq:<preset> switch the equalizer (used by Mantel's Now Playing widget).
+const API_CMDS = /^(toggle|next|prev|like|vol:[+-]\d{1,3}|seek:[+-]\d{1,7}|eq:[a-z]{1,16})$/;
 function handleApi(req, res, url) {
   const json = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
   const host = (req.headers.host || '').toLowerCase();
@@ -397,7 +398,21 @@ function initUpdater() {
   setTimeout(check, 5000);
   setInterval(check, 4 * 60 * 60 * 1000);
 }
-ipcMain.on('player-extra', (_e, x = {}) => integrations.setExtra({ volume: typeof x.volume === 'number' ? x.volume : null, accent: /^#[0-9a-f]{6}$/i.test(x.accent || '') ? x.accent : '' }));
+ipcMain.on('player-extra', (_e, x = {}) => {
+  const e = x.eq && typeof x.eq === 'object' ? x.eq : null;
+  integrations.setExtra({
+    volume: typeof x.volume === 'number' ? x.volume : null,
+    accent: /^#[0-9a-f]{6}$/i.test(x.accent || '') ? x.accent : '',
+    // Equalizer state + the preset list, so local apps (Mantel) can show and switch presets.
+    eq: e ? {
+      available: !!e.available, on: !!e.on,
+      preset: /^[a-z]{1,16}$/.test(e.preset || '') ? e.preset : 'custom',
+      presets: (Array.isArray(e.presets) ? e.presets : []).slice(0, 24)
+        .filter(p => Array.isArray(p) && /^[a-z]{1,16}$/.test(p[0]) && typeof p[1] === 'string')
+        .map(p => ({ id: p[0], name: p[1].slice(0, 32) })),
+    } : null,
+  });
+});
 ipcMain.handle('history', async (_e, action, a = {}) => {
   const H = integrations.history;
   try {

@@ -54,6 +54,10 @@ Each release includes **Amplite-StreamDeck.streamDeckPlugin**. Double-click it t
 - **Key:** shows the album cover; press to play/pause, hold for next.
 - If Amplite isn't running, pressing it opens Amplite. The plugin only talks to Amplite on your PC (`127.0.0.1:43821`), and needs Stream Deck 7.1 or newer.
 
+## Mantel (optional)
+
+[Mantel](https://github.com/larosa023/Mantel)'s Now Playing widget talks to Amplite through the same local API: song, cover, progress, accent color, like, volume and **EQ presets** (pick one from the widget). Nothing to set up; it's used automatically while Amplite is running.
+
 ## Last.fm and Discord (optional)
 
 - **Last.fm:** create a free API account at [last.fm/api/account/create](https://www.last.fm/api/account/create) (any name, callback URL empty). In **Settings → Connections**, paste its API key and shared secret, click **Connect**, and approve in your browser. Songs scrobble after half their length or 4 minutes; scrobbles made offline are sent later.
