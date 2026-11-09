@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Amplite lyrics</title>
+<style>
+  :root { --accent: #1db954; --size: 38px; --font: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+  body { display: flex; align-items: center; justify-content: center; font-family: var(--font); -webkit-app-region: drag; }
+  body.locked { -webkit-app-region: no-drag; }
+  .wrap { max-width: calc(100% - 24px); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 26px 12px; border-radius: 18px;
+    transition: opacity .35s ease, transform .35s ease; }
+  .wrap.hide { opacity: 0; transform: translateY(6px); }
+  body.pill .wrap { background: rgba(10, 11, 14, .62); backdrop-filter: blur(14px); box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+  .line { position: relative; font-size: var(--size); font-weight: 750; letter-spacing: -.01em; line-height: 1.18; text-align: center; color: rgba(255,255,255,.92);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  body.shadow .line, body.shadow .next { text-shadow: 0 2px 4px rgba(0,0,0,.85), 0 0 18px rgba(0,0,0,.6); -webkit-text-stroke: .5px rgba(0,0,0,.35); }
+  .line .fill { position: absolute; inset: 0; color: var(--accent); clip-path: inset(0 100% 0 0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body:not(.karaoke) .line .fill { display: none; }
+  .next { font-size: calc(var(--size) * .55); font-weight: 600; color: rgba(255,255,255,.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; text-align: center; }
+  body:not(.shownext) .next { display: none; }
+  .swap { animation: swap .28s ease; }
+  @keyframes swap { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  /* unlocked: show the frame so it can be found, dragged and resized */
+  .edit { position: fixed; inset: 3px; border: 1.5px dashed rgba(255,255,255,.45); border-radius: 14px; pointer-events: none; display: none; }
+  .bar { position: fixed; top: 8px; right: 10px; display: none; gap: 6px; align-items: center; -webkit-app-region: no-drag; }
+  .bar span { font: 600 11px var(--font); color: rgba(255,255,255,.8); background: rgba(0,0,0,.55); padding: 4px 8px; border-radius: 7px; }
+  .bar button { font: 700 11px var(--font); color: #fff; background: var(--accent); border: 0; border-radius: 7px; padding: 5px 10px; cursor: pointer; }
+  body:not(.locked) .edit, body:not(.locked) .bar { display: flex; }
+  body:not(.locked) .wrap.hide { opacity: .55; transform: none; }
+</style>
+</head>
+<body class="shadow karaoke shownext">
+  <div class="edit"></div>
+  <div class="bar"><span>Drag to move · drag edges to resize</span><button id="lock" title="Lock in place and let clicks pass through">Lock</button></div>
+  <div class="wrap hide" id="wrap">
+    <div class="line" id="line"><span id="lineText">♪ Desktop lyrics</span><span class="fill" id="fill"></span></div>
+    <div class="next" id="next">Synced lyrics show here while music plays</div>
+  </div>
+<script>
+  const $ = id => document.getElementById(id);
+  let lastId = '', locked = false;
+  // Karaoke sweep: the accent colour fills the line from where the song is now to the next line.
+  function sweep(p) {
+    const f = $('fill'), dur = Math.max(1, p.end - p.start), done = Math.min(1, Math.max(0, (p.pos - p.start) / dur));
+    f.style.transition = 'none';
+    f.style.clipPath = `inset(0 ${(100 - done * 100).toFixed(2)}% 0 0)`;
+    if (p.paused || done >= 1) return;
+    void f.offsetWidth; // apply the start position before animating
+    f.style.transition = `clip-path ${Math.max(0, p.end - p.pos)}ms linear`;
+    f.style.clipPath = 'inset(0 0% 0 0)';
+  }
+  window.amplite.onDeskLyrics(p => {
+    const w = $('wrap');
+    if (!p || !p.show) { w.classList.add('hide'); if (!locked) { $('lineText').textContent = '♪ Desktop lyrics'; $('fill').textContent = ''; $('next').textContent = 'Synced lyrics show here while music plays'; } lastId = ''; return; }
+    w.classList.remove('hide');
+    if (p.id !== lastId) {
+      $('lineText').textContent = p.line; $('fill').textContent = p.line; $('next').textContent = p.next || '';
+      const l = $('line'); l.classList.remove('swap'); void l.offsetWidth; l.classList.add('swap');
+      lastId = p.id;
+    }
+    sweep(p);
+  });
+  window.amplite.onDeskLyricsStyle(s => {
+    const b = document.body;
+    locked = !!s.locked;
+    b.classList.toggle('locked', locked);
+    b.classList.toggle('pill', s.look === 'pill'); b.classList.toggle('shadow', s.look !== 'pill');
+    b.classList.toggle('shownext', s.next !== false); b.classList.toggle('karaoke', s.karaoke !== false);
+    document.documentElement.style.setProperty('--size', (({ s: 28, m: 38, l: 50, xl: 64 })[s.size] || 38) + 'px');
+    if (/^#[0-9a-f]{6}$/i.test(s.accent || '')) document.documentElement.style.setProperty('--accent', s.accent);
+    if (s.font) document.documentElement.style.setProperty('--font', s.font);
+  });
+  $('lock').onclick = () => window.amplite.deskLyricsLock();
+</script>
+</body>
+</html>

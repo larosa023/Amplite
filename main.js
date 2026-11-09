@@ -1,6 +1,6 @@
 // Amplite — desktop shell (Electron). Audio comes from the bundled librespot engine (engine.js);
 // the castLabs build keeps Widevine available as a fallback player.
-const { app, BrowserWindow, components, ipcMain, globalShortcut, shell, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, components, ipcMain, globalShortcut, shell, Menu, Tray, nativeImage, screen, clipboard, dialog, net } = require('electron');
 const http = require('http');
 const integrations = require('./integrations');
 const fs = require('fs');
@@ -243,6 +243,66 @@ ipcMain.on('prefs', (_e, p = {}) => {
   }
 });
 
+/* ---------------- desktop lyrics ---------------- */
+// A see-through, always-on-top strip with the current synced lyric. When locked it ignores the mouse
+// entirely (clicks go to whatever is underneath); unlocked it can be dragged and resized.
+let lyricsWin = null, dl = { locked: false, style: {} }, lastLyric = null;
+const lyricsBoundsFile = () => path.join(app.getPath('userData'), 'lyrics-window.json');
+function lyricsBounds() {
+  try { const b = JSON.parse(fs.readFileSync(lyricsBoundsFile(), 'utf8')); if (screen.getAllDisplays().some(d => { const a = d.workArea; return b.x + 40 < a.x + a.width && b.x + b.width - 40 > a.x && b.y + 20 < a.y + a.height && b.y + b.height - 20 > a.y; })) return b; } catch {}
+  const a = screen.getPrimaryDisplay().workArea, w = Math.min(1000, a.width - 80), h = 150;
+  return { x: Math.round(a.x + (a.width - w) / 2), y: a.y + a.height - h - 40, width: w, height: h };
+}
+let lyricsSaveT;
+function saveLyricsBounds() { clearTimeout(lyricsSaveT); lyricsSaveT = setTimeout(() => { if (lyricsWin && !lyricsWin.isDestroyed()) fs.writeFile(lyricsBoundsFile(), JSON.stringify(lyricsWin.getBounds()), () => {}); }, 500); }
+function openLyricsWin() {
+  if (lyricsWin) return;
+  lyricsWin = new BrowserWindow({
+    ...lyricsBounds(), minWidth: 360, minHeight: 80, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
+    alwaysOnTop: true, skipTaskbar: true, resizable: true, maximizable: false, minimizable: false, fullscreenable: false, show: false, title: 'Amplite lyrics',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+  });
+  lyricsWin.setAlwaysOnTop(true, 'screen-saver');
+  lyricsWin.setVisibleOnAllWorkspaces?.(true);
+  lyricsWin.loadURL(`http://127.0.0.1:${PORT}/lyrics.html`);
+  lyricsWin.once('ready-to-show', () => { lyricsWin?.showInactive(); applyLyricsLock(); lyricsWin?.webContents.send('dl-style', { ...dl.style, locked: dl.locked }); if (lastLyric) lyricsWin?.webContents.send('dl', lastLyric); });
+  lyricsWin.on('moved', saveLyricsBounds); lyricsWin.on('resized', saveLyricsBounds);
+  lyricsWin.on('closed', () => { lyricsWin = null; tray?.setContextMenu(trayMenu()); });
+  tray?.setContextMenu(trayMenu());
+}
+function applyLyricsLock() { if (lyricsWin && !lyricsWin.isDestroyed()) { lyricsWin.setIgnoreMouseEvents(!!dl.locked, { forward: true }); lyricsWin.setResizable(!dl.locked); } }
+ipcMain.on('desk-lyrics', (_e, p = {}) => { lastLyric = p; lyricsWin?.webContents.send('dl', p); });
+ipcMain.on('desk-lyrics-config', (_e, c = {}) => {
+  dl = { locked: !!c.locked, style: { size: c.size, look: c.look, next: c.next, karaoke: c.karaoke, accent: c.accent, font: c.font } };
+  if (c.on) { openLyricsWin(); applyLyricsLock(); lyricsWin?.webContents.send('dl-style', { ...dl.style, locked: dl.locked }); }
+  else if (lyricsWin) lyricsWin.close();
+  tray?.setContextMenu(trayMenu());
+});
+// The lock button on the lyrics strip itself.
+ipcMain.on('desk-lyrics-lock', () => mainWin?.webContents.send('media', 'desklyrics-lock'));
+
+/* ---------------- share images (stats card) ---------------- */
+// Cover art / artist photos for the card are fetched here so the card canvas isn't "tainted".
+const IMG_HOSTS = /(^|\.)(scdn\.co|spotifycdn\.com|fastly\.net|last\.fm|lastfm\.freetls\.fastly\.net)$/i;
+ipcMain.handle('image-data', async (_e, url) => {
+  try {
+    const u = new URL(url); if (u.protocol !== 'https:' || !IMG_HOSTS.test(u.hostname)) return null;
+    const r = await net.fetch(url); if (!r.ok) return null;
+    const type = r.headers.get('content-type') || 'image/jpeg'; if (!/^image\//.test(type)) return null;
+    return `data:${type};base64,${Buffer.from(await r.arrayBuffer()).toString('base64')}`;
+  } catch { return null; }
+});
+ipcMain.handle('share-image', async (_e, { dataUrl, action, name } = {}) => {
+  if (!/^data:image\/png;base64,/.test(dataUrl || '')) return { ok: false };
+  const img = nativeImage.createFromDataURL(dataUrl);
+  if (action === 'copy') { clipboard.writeImage(img); return { ok: true }; }
+  const r = await dialog.showSaveDialog(mainWin, { defaultPath: path.join(app.getPath('pictures'), (name || 'Amplite stats').replace(/[\\/:*?"<>|]/g, '') + '.png'), filters: [{ name: 'PNG image', extensions: ['png'] }] });
+  if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+  fs.writeFileSync(r.filePath, img.toPNG());
+  shell.showItemInFolder(r.filePath);
+  return { ok: true, path: r.filePath };
+});
+
 /* ---------------- tray ---------------- */
 let tray = null, now = { title: '', artist: '', paused: true };
 function showMain() { if (!mainWin) return; mainWin.show(); if (mainWin.isMinimized()) mainWin.restore(); mainWin.focus(); }
@@ -257,6 +317,8 @@ function trayMenu() {
     { type: 'separator' },
     { label: 'Show Amplite', click: showMain },
     { label: 'Mini amp', click: () => send('amp') },
+    { label: 'Desktop lyrics', type: 'checkbox', checked: !!lyricsWin, click: () => send('desklyrics') },
+    ...(lyricsWin && dl.locked ? [{ label: 'Move desktop lyrics…', click: () => send('desklyrics-unlock') }] : []),
     { type: 'separator' },
     { label: 'Quit Amplite', click: () => { quitting = true; app.quit(); } },
   ]);

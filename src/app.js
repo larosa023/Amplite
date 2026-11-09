@@ -57,7 +57,7 @@ const AMP_DEFAULTS = {
   scroll: 'normal', time: 'elapsed', opacity: 100, onTop: true, snap: true, corner: 'none', eqOpen: false, plOpen: false, lyricLine: false,
 };
 const EQ_DEFAULTS = { enabled: false, preamp: 0, auto: true, preset: 'flat', gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
-const DEFAULTS = { ui: { sideMin: false, lite: false, accent: '', closeToTray: true, startup: 'off', hwAccel: true, taskbar: true, discord: false, discordAppId: '' }, eq: EQ_DEFAULTS, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto', hideSpotify: true } };
+const DEFAULTS = { ui: { sideMin: false, lite: false, accent: '', closeToTray: true, startup: 'off', hwAccel: true, taskbar: true, discord: false, discordAppId: '', deskLyrics: false, dlLocked: false, dlSize: 'm', dlLook: 'shadow', dlNext: true, dlKaraoke: true }, eq: EQ_DEFAULTS, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto', hideSpotify: true } };
 const clone = o => JSON.parse(JSON.stringify(o));
 const CFG = (() => {
   const saved = store.get('cfg', {}) || {}, c = clone(DEFAULTS);
@@ -106,7 +106,7 @@ const ICONS = {
   queue: '<path d="M3 6h13M3 12h13M3 18h9M17 15v6l5-3z"/>',
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7"/>', listadd: '<path d="M3 6h12M3 12h12M3 18h7M18 13v8M14 17h8"/>',
 };
 const svg = n => {
@@ -749,6 +749,7 @@ const artistLinks = arr => (arr || []).map(a => a.id ? `<a data-open="artist:${e
 
 function updatePlayerUI() {
   const n = S.now;
+  if (CFG.ui.deskLyrics) deskLyricsTick();
   $('#npTitle').textContent = n?.name || 'Nothing playing';
   $('#npArtist').innerHTML = n ? artistLinks(n.artists) : (S.deviceId ? 'Ready — pick something to play' : '');
   const art = $('#npArt');
@@ -851,7 +852,7 @@ async function viewStats(el, _arg, alive) {
   if (!IS_APP) { el.innerHTML = '<div class="pad"><p class="note">Stats are available in the desktop app.</p></div>'; return; }
   const m = await import('./stats.js');
   if (!alive()) return;
-  await m.viewStats(el, { api, bgApi: (p, o = {}) => api(p, { ...o, bg: true }), rateLimited, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive });
+  await m.viewStats(el, { meName: S.me?.display_name || S.me?.id || '', api, bgApi: (p, o = {}) => api(p, { ...o, bg: true }), rateLimited, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive });
 }
 const VIEWS = { home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
 let navToken = 0;
@@ -1784,7 +1785,7 @@ function parseLrc(text) {
   }
   return out.sort((a, b) => a.t - b.t);
 }
-const lyricsWanted = () => D.tab === 'lyrics' || (CFG.amp.lyricLine && ampOpen());
+const lyricsWanted = () => D.tab === 'lyrics' || (CFG.amp.lyricLine && ampOpen()) || (IS_APP && CFG.ui.deskLyrics);
 async function loadLyrics(n) {
   if (!n?.id) return null;
   if (D.lyrics.has(n.id)) return D.lyrics.get(n.id);
@@ -1808,6 +1809,7 @@ async function renderLyrics() {
   if (D.tab !== 'lyrics' || S.now?.id !== n.id) return;
   D.cur = n.id; D.active = -1;
   D.lines = L?.synced?.length ? L.synced : [];
+  deskLyricsTick();
   if (D.lines.length) {
     body.innerHTML = `<div class="lyrics synced">${D.lines.map((l, i) => `<p data-li="${i}" data-t="${l.t}">${esc(l.text) || '♪'}</p>`).join('')}</div><p class="muted small-note">Lyrics from LRCLIB · click a line to jump there</p>`;
     tickLyrics(true);
@@ -1834,6 +1836,46 @@ async function syncLyricsForTrack() {
   if (D.tab === 'lyrics') { if (D.cur !== S.now.id) renderLyrics(); return; }
   const L = await loadLyrics(S.now);
   if (L?.synced?.length && S.now) { D.lines = L.synced; D.cur = S.now.id; D.active = -1; }
+  deskLyricsTick();
+}
+
+// ---- desktop lyrics (floating, always-on-top lyric strip) ----
+// The current line is sent when it starts (a timer set for the next line, not a per-frame loop),
+// plus on pause / seek, so it costs next to nothing and works with Amplite in the tray.
+const DLY = { t: null, id: '', paused: null, base: null };
+function deskLyricsTick() {
+  clearTimeout(DLY.t);
+  if (!IS_APP || !CFG.ui.deskLyrics) return;
+  const n = S.now, lines = n && D.cur === n.id ? D.lines : [];
+  if (!n || !lines.length) {
+    if (DLY.id !== 'none') { DLY.id = 'none'; window.amplite.deskLyrics({ show: false }); }
+    return;
+  }
+  const p = pos() + 150;
+  let i = lines.length - 1; while (i >= 0 && lines[i].t > p) i--;
+  const cur = lines[i], next = lines[i + 1];
+  const id = `${n.id}:${i}`, start = cur ? cur.t : 0, end = next ? next.t : (n.duration || start + 4000);
+  // Resend on a new line, play/pause, or when the song jumped (seek) — not on every poll.
+  const expect = DLY.base ? DLY.base.p + (n.paused ? 0 : Date.now() - DLY.base.at) : p;
+  if (id !== DLY.id || !!n.paused !== DLY.paused || Math.abs(expect - p) > 800) {
+    DLY.id = id; DLY.paused = !!n.paused; DLY.base = { p, at: Date.now() };
+    window.amplite.deskLyrics({ show: !!(cur && cur.text), id, line: cur?.text || '', next: next?.text || '', start, end, pos: p, paused: !!n.paused });
+  }
+  if (!n.paused && next) DLY.t = setTimeout(deskLyricsTick, Math.max(40, next.t - p + 30));
+}
+function applyDeskLyrics() {
+  if (!IS_APP) return;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  window.amplite.deskLyricsConfig({
+    on: !!CFG.ui.deskLyrics, locked: !!CFG.ui.dlLocked, size: CFG.ui.dlSize, look: CFG.ui.dlLook, next: CFG.ui.dlNext, karaoke: CFG.ui.dlKaraoke,
+    accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '', font: getComputedStyle(document.body).fontFamily,
+  });
+  if (CFG.ui.deskLyrics) { DLY.id = ''; syncLyricsForTrack(); deskLyricsTick(); }
+  const b = $('#deskLyricsBtn'); if (b) { b.classList.toggle('on', !!CFG.ui.deskLyrics); b.title = CFG.ui.deskLyrics ? 'Hide desktop lyrics' : 'Show lyrics on your desktop'; }
+}
+function toggleDeskLyrics() {
+  setK('ui.deskLyrics', !CFG.ui.deskLyrics);
+  if (CFG.ui.deskLyrics && !store.get('dlTold')) { store.set('dlTold', true); toast('Desktop lyrics on — drag the strip where you want it, then click Lock.'); if (CFG.ui.dlLocked) setK('ui.dlLocked', false); }
 }
 function bindDrawer() {
   $('#queueBtn').onclick = () => openDrawer('queue');
@@ -1841,6 +1883,7 @@ function bindDrawer() {
   $('#drawer').addEventListener('click', e => {
     if (e.target.closest('[data-dclose]')) return closeDrawer();
     const tb = e.target.closest('[data-dtab]'); if (tb) { D.tab = null; return openDrawer(tb.dataset.dtab); }
+    if (e.target.closest('#deskLyricsBtn')) return toggleDeskLyrics();
     const ln = e.target.closest('[data-t]'); if (ln) seek(+ln.dataset.t);
   });
 }
@@ -2388,6 +2431,7 @@ function applyAccent() {
 }
 function applyUI() {
   applyAccent();
+  applyDeskLyrics();
   if (IS_APP) window.amplite.setPrefs({ closeToTray: CFG.ui.closeToTray, startup: CFG.ui.startup, hwAccel: CFG.ui.hwAccel, taskbar: CFG.ui.taskbar, discord: CFG.ui.discord, discordAppId: CFG.ui.discordAppId });
   $('#app').classList.toggle('side-min', !!CFG.ui.sideMin);
   document.documentElement.classList.toggle('lite', !!CFG.ui.lite);
@@ -2422,6 +2466,12 @@ function settingsHTML() {
       + (IS_APP ? grp('Windows', seg('ui.startup', 'Start with Windows', [['off', 'Off'], ['normal', 'Open window'], ['tray', 'In tray'], ['amp', 'Mini amp']], 'Launch Amplite when you sign in to Windows')
         + sw('ui.closeToTray', 'Close to tray', 'Closing the window keeps Amplite playing in the system tray')
         + sw('ui.taskbar', 'Taskbar controls', 'Previous / play / next buttons on Amplite’s taskbar preview, and song progress on its taskbar icon')) : '')
+      + (IS_APP ? grp('Desktop lyrics', sw('ui.deskLyrics', 'Show lyrics on the desktop', 'A see-through, always-on-top strip with the current line of synced lyrics. Also in the lyrics panel and the tray menu')
+        + sw('ui.dlLocked', 'Lock in place', 'Clicks go straight through to what’s underneath. Turn off to move or resize it')
+        + seg('ui.dlSize', 'Text size', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Huge']])
+        + seg('ui.dlLook', 'Look', [['shadow', 'Text only'], ['pill', 'Dark backdrop']])
+        + sw('ui.dlKaraoke', 'Karaoke fill', 'The line fills in with your accent color as it’s sung')
+        + sw('ui.dlNext', 'Show the next line', 'Smaller, underneath')) : '')
       + grp('Performance', sw('ui.lite', 'Lite mode', 'Turns off animations, blur and shadows to save CPU/GPU')
         + (IS_APP ? sw('ui.hwAccel', 'Hardware acceleration', 'Turning it off can lower memory use on PCs with weak graphics; uses a bit more CPU (takes effect after restart)') : ''))
       + grp('Theme', `<div class="theme-list" id="setThemes"></div>`),
@@ -2741,6 +2791,9 @@ async function boot() {
       const m = /^(vol|seek):([+-]\d+)$/.exec(cmd);
       if (m && m[1] === 'vol') { setVolume(S.volume + +m[2] / 100); syncVolume(); return; }
       if (m && m[1] === 'seek') { if (S.now?.duration) seek(Math.max(0, Math.min(S.now.duration - 1000, pos() + +m[2]))); return; }
+      if (cmd === 'desklyrics') return toggleDeskLyrics();
+      if (cmd === 'desklyrics-lock') return setK('ui.dlLocked', true);
+      if (cmd === 'desklyrics-unlock') return setK('ui.dlLocked', false);
       ({ toggle: togglePlay, next, prev, stop, amp: toggleAmp, like: toggleLike })[cmd]?.();
     });
     window.amplite.onWindowVisible?.(onWinVisibility);

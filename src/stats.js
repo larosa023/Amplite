@@ -317,8 +317,115 @@ function driftHTML(g, light) {
   </section>`;
 }
 
+/* ---------------- share card (a "Wrapped"-style image) ---------------- */
+let lastD = null, lastG = null;
+const PERIOD = { week: 'week', month: 'month', year: 'year', all: 'music' };
+async function loadImg(url) {
+  if (!url) return null;
+  const data = await window.amplite.imageData(url).catch(() => null);
+  if (!data) return null;
+  return new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = data; });
+}
+function fit(x, text, max) { if (x.measureText(text).width <= max) return text; let t = text; while (t.length > 1 && x.measureText(t + '…').width > max) t = t.slice(0, -1); return t.trimEnd() + '…'; }
+function rr(x, X, Y, w, h, r) { x.beginPath(); x.roundRect(X, Y, w, h, r); }
+function cover(x, im, X, Y, w, h) { const s = Math.max(w / im.width, h / im.height), iw = im.width * s, ih = im.height * s; x.drawImage(im, X + (w - iw) / 2, Y + (h - ih) / 2, iw, ih); }
+async function drawCard(d, g) {
+  const W = 1080, H = 1350, P = 80, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const x = cv.getContext('2d');
+  const css = getComputedStyle(document.documentElement);
+  const accent = /^#[0-9a-f]{6}$/i.test(css.getPropertyValue('--accent').trim()) ? css.getPropertyValue('--accent').trim() : '#1db954';
+  const font = getComputedStyle(document.body).fontFamily || 'Segoe UI, sans-serif';
+  const F = (w, px) => `${w} ${px}px ${font}`;
+  const ink = '#ffffff', muted = 'rgba(255,255,255,.62)', faint = 'rgba(255,255,255,.08)';
+  // background: near-black with two soft glows of the accent colour
+  x.fillStyle = '#0b0c10'; x.fillRect(0, 0, W, H);
+  const glow = (cx, cy, r, a) => { const gr = x.createRadialGradient(cx, cy, 0, cx, cy, r); gr.addColorStop(0, accent + a); gr.addColorStop(1, accent + '00'); x.fillStyle = gr; x.fillRect(0, 0, W, H); };
+  glow(180, 120, 760, '8c'); glow(1000, 1300, 620, '40');
+  // header: logo + range
+  x.fillStyle = accent; [[0, 26], [14, 40], [28, 32]].forEach(([dx, h]) => { rr(x, P + dx, 104 - h, 10, h, 5); x.fill(); });
+  x.fillStyle = ink; x.font = F(750, 30); x.textBaseline = 'alphabetic'; x.fillText('Amplite', P + 52, 104);
+  const now = new Date(), from = RANGES[range].days ? new Date(Date.now() - (RANGES[range].days - 1) * DAY) : null;
+  const span = from ? `${from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${now.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: range === 'year' ? 'numeric' : undefined })}` : 'All time';
+  x.font = F(600, 26); x.fillStyle = muted; x.textAlign = 'right'; x.fillText(span, W - P, 104); x.textAlign = 'left';
+  // title
+  const who = (C.meName || 'My').trim();
+  x.fillStyle = ink; x.font = F(820, 66); x.fillText(fit(x, `${who}’s ${PERIOD[range]}${range === 'all' ? '' : ' in music'}`, W - 2 * P), P, 236);
+  x.font = F(500, 30); x.fillStyle = muted;
+  x.fillText(fit(x, g?.genres?.[0] ? `Mostly ${g.genres[0]}` + (d.topArtists[0] ? ` · led by ${d.topArtists[0].name}` : '') : RANGES[range].label, W - 2 * P), P, 286);
+  // the big number
+  x.fillStyle = accent; x.font = F(900, 168); x.fillText(Math.round(d.ms / 60000).toLocaleString(), P - 6, 468);
+  x.fillStyle = ink; x.font = F(650, 34); x.fillText('minutes listened', P, 520);
+  const p = RANGES[range].days && d.prevMs ? Math.round(((d.ms - d.prevMs) / d.prevMs) * 100) : null;
+  if (p !== null) {
+    const t = p === 0 ? `same as ${RANGES[range].prev}` : `${p > 0 ? '▲' : '▼'} ${Math.abs(p)}% vs ${RANGES[range].prev}`; x.font = F(700, 24);
+    const tw = x.measureText(t).width + 28, X0 = P + x.measureText('minutes listened').width * (34 / 24) + 24;
+    x.fillStyle = 'rgba(255,255,255,.12)'; rr(x, X0, 492, tw, 40, 20); x.fill(); x.fillStyle = ink; x.fillText(t, X0 + 14, 521);
+  }
+  // three tiles
+  const tiles = [[d.plays.toLocaleString(), 'songs played'], [d.artists.toLocaleString(), 'artists'], [`${d.streak}`, d.streak === 1 ? 'day streak' : 'day streak']];
+  const tw = (W - 2 * P - 2 * 22) / 3;
+  tiles.forEach(([v, l], i) => {
+    const X = P + i * (tw + 22); x.fillStyle = faint; rr(x, X, 560, tw, 124, 24); x.fill();
+    x.fillStyle = ink; x.font = F(820, 50); x.fillText(v, X + 26, 628); x.fillStyle = muted; x.font = F(600, 24); x.fillText(l, X + 26, 664);
+  });
+  // top artists
+  x.fillStyle = ink; x.font = F(780, 32); x.fillText('Top artists', P, 752);
+  const info = infoMap(), list = d.topArtists.slice(0, 5);
+  const faces = await Promise.all(list.map(a => loadImg(info[keyOf(a.name)]?.img)));
+  list.forEach((a, i) => {
+    const Y = 780 + i * 80;
+    x.fillStyle = muted; x.font = F(700, 28); x.textAlign = 'right'; x.fillText(String(i + 1), P + 26, Y + 46); x.textAlign = 'left';
+    x.save(); x.beginPath(); x.arc(P + 78, Y + 36, 30, 0, Math.PI * 2); x.closePath(); x.clip();
+    if (faces[i]) cover(x, faces[i], P + 48, Y + 6, 60, 60); else { x.fillStyle = 'rgba(255,255,255,.14)'; x.fillRect(P + 48, Y + 6, 60, 60); }
+    x.restore();
+    const mins = `${Math.round(a.ms / 60000).toLocaleString()} min`;
+    x.font = F(600, 26); const mw = x.measureText(mins).width;
+    x.fillStyle = muted; x.textAlign = 'right'; x.fillText(mins, W - P, Y + 46); x.textAlign = 'left';
+    x.fillStyle = ink; x.font = F(i === 0 ? 800 : 680, i === 0 ? 38 : 34); x.fillText(fit(x, a.name, W - 2 * P - 140 - mw - 30), P + 128, Y + 48);
+  });
+  // top song
+  const s = d.topSongs[0];
+  if (s) {
+    const Y = 1196; x.fillStyle = faint; rr(x, P, Y - 14, W - 2 * P, 118, 22); x.fill();
+    const im = await loadImg(s.image);
+    x.save(); rr(x, P + 14, Y, 90, 90, 12); x.clip(); if (im) cover(x, im, P + 14, Y, 90, 90); else { x.fillStyle = 'rgba(255,255,255,.14)'; x.fillRect(P + 14, Y, 90, 90); } x.restore();
+    const plays = `${s.plays} play${s.plays === 1 ? '' : 's'}`; x.font = F(650, 26); const pw = x.measureText(plays).width;
+    x.fillStyle = accent; x.font = F(750, 20); x.fillText('TOP SONG', P + 128, Y + 26);
+    x.fillStyle = ink; x.font = F(780, 34); x.fillText(fit(x, s.title, W - 2 * P - 160 - pw - 30), P + 128, Y + 62);
+    x.fillStyle = muted; x.font = F(500, 24); x.fillText(fit(x, s.artist, W - 2 * P - 160 - pw - 30), P + 128, Y + 92);
+    x.font = F(650, 26); x.textAlign = 'right'; x.fillText(plays, W - P - 22, Y + 56); x.textAlign = 'left';
+  }
+  x.fillStyle = 'rgba(255,255,255,.4)'; x.font = F(600, 20); x.textAlign = 'center'; x.fillText('made with Amplite', W / 2, H - 22); x.textAlign = 'left';
+  return cv.toDataURL('image/png');
+}
+async function openShare(btn) {
+  if (!lastD) return;
+  btn.disabled = true;
+  let url = '';
+  try { url = await drawCard(lastD, lastG); } catch (e) { console.error(e); }
+  btn.disabled = false;
+  if (!url) return;
+  document.getElementById('stShare')?.remove();
+  const m = document.createElement('div'); m.id = 'stShare'; m.className = 'modal';
+  m.innerHTML = `<div class="modal-card st-share"><header class="modal-head"><h2>Share your ${PERIOD[range] === 'music' ? 'stats' : PERIOD[range]}</h2><button class="round-btn" data-share-close title="Close (Esc)">${C.svg('x')}</button></header>
+    <div class="st-share-body"><img src="${url}" alt="Your listening stats card"><div class="st-share-actions">
+      <button class="btn primary" data-share="copy">Copy image</button><button class="btn" data-share="save">Save as PNG…</button>
+      <p class="muted" id="stShareMsg">Copy it, then paste into Discord, a chat or a story.</p></div></div></div>`;
+  document.body.append(m);
+  const close = () => { m.remove(); document.removeEventListener('keydown', esc); };
+  const esc = e => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', esc);
+  m.addEventListener('click', async e => {
+    if (e.target === m || e.target.closest('[data-share-close]')) return close();
+    const b = e.target.closest('[data-share]'); if (!b) return;
+    const r = await window.amplite.shareImage({ dataUrl: url, action: b.dataset.share, name: `Amplite – ${RANGES[range].label}` });
+    const msg = m.querySelector('#stShareMsg');
+    if (r?.ok) msg.textContent = b.dataset.share === 'copy' ? 'Copied — paste it anywhere (Ctrl+V).' : 'Saved.';
+  });
+}
+
 function rangeTabs() {
-  return `<div class="seg st-range" role="tablist">${Object.entries(RANGES).map(([k, v]) => `<button class="${k === range ? 'on' : ''}" data-st-range="${k}">${v.label}</button>`).join('')}</div>`;
+  return `<div class="st-head-ctl"><button class="btn st-share-btn" data-st-share title="Make an image of these stats to share">${C.svg('share')} Share</button><div class="seg st-range" role="tablist">${Object.entries(RANGES).map(([k, v]) => `<button class="${k === range ? 'on' : ''}" data-st-range="${k}">${v.label}</button>`).join('')}</div></div>`;
 }
 function isLight() {
   const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
@@ -342,7 +449,7 @@ async function render(skipLoad) {
     return;
   }
   const d = crunch(items, range);
-  lastSongs = d.topSongs.slice(0, 10);
+  lastSongs = d.topSongs.slice(0, 10); lastD = d;
   el.innerHTML = `<div class="pad st">
     <header class="st-head"><div><h1>Your stats</h1><p class="muted">Live from Amplite · ${RANGES[range].label.toLowerCase()}</p></div>${rangeTabs()}</header>
     ${headline(d)}
@@ -365,7 +472,7 @@ async function render(skipLoad) {
     if (!C.alive()) return;
     const card = el.querySelector('.st-rank')?.closest('.st-card'); if (card) card.outerHTML = topArtistsHTML(d);
   });
-  genreDrift(items).then(g => { if (!C.alive()) return; const slot = el.querySelector('#stDrift'); if (slot) slot.innerHTML = driftHTML(g, isLight()); });
+  genreDrift(items).then(g => { lastG = g; if (!C.alive()) return; const slot = el.querySelector('#stDrift'); if (slot) slot.innerHTML = driftHTML(g, isLight()); });
 }
 
 /* ---------------- hover tooltip + clicks ---------------- */
@@ -384,6 +491,7 @@ function bind(el) {
   el.addEventListener('click', e => {
     const r = e.target.closest('[data-st-range]'); if (r) { range = r.dataset.stRange; C.store.set('statsRange', range); render(true); return; }
     const imp = e.target.closest('[data-st-import]'); if (imp) { importLastfm(imp); return; }
+    const sh = e.target.closest('[data-st-share]'); if (sh) { openShare(sh); return; }
     const clr = e.target.closest('[data-st-clear]');
     if (clr) {
       if (!clr.dataset.armed) { clr.dataset.armed = '1'; clr.textContent = 'Click again to delete all stats'; setTimeout(() => { clr.dataset.armed = ''; clr.textContent = 'Clear history'; }, 4000); return; }

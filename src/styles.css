@@ -828,3 +828,19 @@ kbd { white-space:nowrap; }
 .st-facts { display:grid; grid-template-columns:repeat(2, minmax(140px, auto)); gap:14px 36px; margin-top:28px; }
 .st-facts dt { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700; }
 .st-facts dd { font-size:20px; font-weight:750; margin-top:3px; font-variant-numeric:tabular-nums; }
+
+/* desktop lyrics toggle in the lyrics panel */
+.pill-tog { margin-left:auto; margin-right:6px; padding:5px 11px; border-radius:999px; border:1px solid var(--border); font-size:12px; font-weight:650; color:var(--muted); }
+.pill-tog:hover { color:var(--text); border-color:var(--text); }
+.pill-tog.on { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+
+/* ---- Stats share card ---- */
+.st-head-ctl { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.st-share-btn { display:inline-flex; align-items:center; gap:6px; }
+.st-share-btn .ic { width:15px; height:15px; }
+.st-share { width:min(820px, 100%); height:auto; max-height:calc(100vh - 60px); }
+.st-share-body { display:flex; gap:22px; padding:18px 22px 22px; align-items:flex-start; min-height:0; }
+.st-share-body img { height:min(66vh, 620px); aspect-ratio:1080 / 1350; border-radius:14px; box-shadow:0 12px 40px #0008; }
+.st-share-actions { display:flex; flex-direction:column; gap:10px; min-width:200px; padding-top:6px; }
+.st-share-actions p { font-size:12.5px; line-height:1.5; }
+@media (max-width: 760px) { .st-share-body { flex-direction:column; align-items:center; } }
