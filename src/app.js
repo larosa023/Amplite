@@ -17,6 +17,7 @@ const SCOPES = [
   'playlist-read-private', 'playlist-read-collaborative',
   'playlist-modify-public', 'playlist-modify-private',
   'user-top-read', 'user-read-recently-played',
+  'user-follow-read', 'user-follow-modify',
 ].join(' ');
 
 const THEMES = [
@@ -84,6 +85,7 @@ const ICONS = {
   play: ['M8 5.5v13l11-6.5z'], pause: ['M6.5 5h4v14h-4zM13.5 5h4v14h-4z'],
   next: ['M5 6l9 6-9 6zM16 6h2.5v12H16z'], prev: ['M19 6l-9 6 9 6zM5.5 6H8v12H5.5z'], stop: ['M6 6h12v12H6z'],
   shuffle: '<path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>',
+  radio: '<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/>',
   repeat: '<path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
   search: '<circle cx="11" cy="11" r="7.5"/><path d="m21 21-4.35-4.35"/>',
@@ -868,7 +870,7 @@ async function viewLibrary(el, _arg, alive) {
         query = { type: 'artist', limit: 50, after: a.cursors.after };
       }
       return out;
-    })().catch(() => null),
+    })().catch(e => { if (e?.status === 403 || e?.status === 401) S.libNeedsFollow = !(store.get('token')?.scope || '').includes('user-follow-read'); return null; }),
   ]);
   if (!alive()) return;
   const tab = store.get('libTab', 'albums');
@@ -890,11 +892,13 @@ async function viewLibrary(el, _arg, alive) {
     if (by === 'artist') items.sort((a, b) => a.artist.localeCompare(b.artist) || a.name.localeCompare(b.name));
     const failed = tab === 'albums' ? !albums : !artists;
     $('#libGrid').innerHTML = items.length ? items.map(x => x.html()).join('')
+      : tab === 'artists' && failed && S.libNeedsFollow ? `<div class="empty small"><p>Amplite needs permission to see the artists you follow.</p><button class="pill-btn" data-allow-login>Allow</button></div>`
       : `<p class="muted">${failed ? 'Couldn’t load this from Spotify. Try again in a minute.' : q ? 'Nothing matches.' : tab === 'albums' ? 'Albums you save in Spotify show up here.' : 'Artists you follow show up here.'}</p>`;
   };
   draw();
   let ft; $('#libFilter').addEventListener('input', () => { clearTimeout(ft); ft = setTimeout(draw, 80); });
   sortSel.onchange = () => { store.set('libSort:' + tab, sortSel.value); draw(); };
+  $('#libGrid').addEventListener('click', e => { if (e.target.closest('[data-allow-login]')) login(); });
   el.querySelector('.lib-ctl').addEventListener('click', e => { const b = e.target.closest('[data-libtab]'); if (b && b.dataset.libtab !== tab) { store.set('libTab', b.dataset.libtab); navigate('library', '', false); } });
 }
 const VIEWS = { library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
@@ -1198,17 +1202,225 @@ async function viewAlbum(el, id, alive) {
   }) + `<div class="pad">${trackTable(tracks, { context: al.uri, showAlbum: false, showArt: false })}</div>`;
 }
 
+/* ---------------- artist page ---------------- */
+// Spotify no longer gives apps an artist's top tracks, related artists or follower counts, so the
+// page is built from: Spotify (profile, releases, popular songs via search), Last.fm (bio, listeners,
+// your scrobbles, tags, similar artists — when a key is set) and your own Amplite history.
+const ART = { similar: null };
+const fmtNum = n => n >= 1e9 ? (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
+function needsScope(e, word, what) {
+  if (e?.status !== 401 && e?.status !== 403) return false;
+  if ((store.get('token')?.scope || '').includes(word)) return false;
+  toast(`Amplite needs permission to ${what}.`, { label: 'Allow', run: login });
+  return true;
+}
+// The hero takes its colour from the artist's photo.
+async function tintFrom(url) {
+  if (!IS_APP || !url) return '';
+  try {
+    const data = await window.amplite.imageData(url); if (!data) return '';
+    const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = data; });
+    const c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, 16, 16);
+    const d = x.getImageData(0, 0, 16, 16).data; let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) { const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]); const w = (mx - mn) / 255 + 0.08; r += d[i] * w; g += d[i + 1] * w; b += d[i + 2] * w; n += w; }
+    const k = v => Math.round(Math.min(200, v / n));
+    return `rgb(${k(r)}, ${k(g)}, ${k(b)})`;
+  } catch { return ''; }
+}
+async function isFollowing(ar) {
+  try { const r = await api('/me/library/contains', { query: { uris: ar.uri } }); if (Array.isArray(r)) return !!r[0]; } catch {}
+  try { const r = await api('/me/following/contains', { query: { type: 'artist', ids: ar.id } }); return !!r?.[0]; } catch { return null; }
+}
+async function setFollow(ar, on, btn) {
+  btn.disabled = true;
+  const method = on ? 'PUT' : 'DELETE';
+  try {
+    try { await api('/me/library', { method, query: { uris: ar.uri } }); }
+    catch (e) { if (e.status === 401 || (e.status === 403 && !(store.get('token')?.scope || '').includes('user-follow'))) throw e; await api('/me/following', { method, query: { type: 'artist', ids: ar.id } }); }
+    btn.classList.toggle('on', on); btn.textContent = on ? 'Following' : 'Follow';
+    purgeCache(/\/me\/following|\/me\/library/);
+    toast(on ? `Following ${ar.name}` : `Unfollowed ${ar.name}`);
+  } catch (e) { if (!needsScope(e, 'user-follow-modify', 'follow artists')) toast(`Couldn’t ${on ? 'follow' : 'unfollow'}: ${e.message}`); }
+  btn.disabled = false;
+}
+// Your own listening of this artist, from Amplite's history.
+async function artistHistory(name) {
+  if (!IS_APP) return null;
+  try {
+    const r = await window.amplite.history('read'), k = recKey(name, ''), mine = [], totals = new Map();
+    for (const x of r.items || []) {
+      const names = x.artists?.length ? x.artists : [x.artist];
+      for (const a of names) { if (!a) continue; const kk = recKey(a, ''); totals.set(kk, (totals.get(kk) || 0) + (x.ms || 200000)); }
+      if (names.some(a => recKey(a, '') === k)) mine.push(x);
+    }
+    if (!mine.length) return { plays: 0 };
+    const ms = mine.reduce((t, x) => t + (x.ms || 200000), 0);
+    const rank = [...totals.values()].filter(v => v > ms).length + 1;
+    const songs = new Map(); mine.forEach(x => { const sk = x.uri || recKey(name, x.title); const e = songs.get(sk) || { title: x.title, uri: x.uri, image: x.image, plays: 0 }; e.plays++; if (!e.image && x.image) e.image = x.image; songs.set(sk, e); });
+    return { plays: mine.length, ms, rank, of: totals.size, first: Math.min(...mine.map(x => x.ts)) * 1000, last: Math.max(...mine.map(x => x.ts)) * 1000,
+      week: mine.filter(x => x.ts * 1000 > Date.now() - 7 * 864e5).length, top: [...songs.values()].sort((a, b) => b.plays - a.plays).slice(0, 5) };
+  } catch { return null; }
+}
+// Spotify artist for a Last.fm name (photo + id), remembered for 30 days.
+async function spotifyArtistByName(name) {
+  const m = (ART.similar ??= store.get('simartists', {}) || {}), k = recKey(name, '');
+  if (m[k] && Date.now() - m[k].at < 30 * 864e5) return m[k].id ? m[k] : null;
+  let out = { at: Date.now() };
+  try {
+    const d = await api('/search', { bg: true, query: { q: `artist:"${name.replace(/"/g, '')}"`, type: 'artist', limit: 3 } });
+    const a = (d.artists?.items || []).find(x => recKey(x.name, '') === k) || null;
+    if (a) out = { id: a.id, uri: a.uri, name: a.name, img: img(a.images, 300), at: Date.now() };
+  } catch { return null; } // busy: try again another time
+  m[k] = out; const keys = Object.keys(m); if (keys.length > 800) keys.slice(0, 200).forEach(x => delete m[x]); store.set('simartists', m);
+  return out.id ? out : null;
+}
+const relDate = d => { if (!d) return ''; const p = d.split('-'); return p.length === 3 ? new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : p[0]; };
+const GROUPS = [['album', 'Albums'], ['single', 'Singles & EPs'], ['compilation', 'Compilations'], ['appears_on', 'Appears on']];
+
 async function viewArtist(el, id, alive) {
   const ar = await api(`/artists/${id}`);
-  let albums = [];
-  try { albums = (await api(`/artists/${id}/albums`, { query: { include_groups: 'album,single', limit: 10 } }))?.items || []; } catch {}
+  // Releases (each group separately, newest first) and popular songs in parallel.
+  const [groups, popular] = await Promise.all([
+    Promise.all(GROUPS.map(([g]) => pageAll(`/artists/${id}/albums`, { include_groups: g, limit: 10 }, g === 'appears_on' ? 30 : 100).catch(() => []))),
+    api('/search', { query: { q: `artist:"${ar.name.replace(/"/g, '')}"`, type: 'track', limit: 10 } })
+      .then(d => (d.tracks?.items || []).map(norm).filter(t => t && t.artists.some(a => a.id === id))).catch(() => []),
+  ]);
   if (!alive()) return;
+  const rel = groups.map(list => [...list].sort((a, b) => (b.release_date || '').localeCompare(a.release_date || '')));
+  const own = [...rel[0], ...rel[1]].sort((a, b) => (b.release_date || '').localeCompare(a.release_date || ''));
+  const latest = own[0];
+  const photo = img(ar.images), counts = rel.map(r => r.length);
   S.hero = { context: ar.uri };
-  el.innerHTML = hero({ image: img(ar.images), round: true, kind: 'Artist', title: ar.name, meta: (ar.genres || []).slice(0, 3).map(esc).join(' · '),
-    pin: { type: 'artist', id: ar.id, uri: ar.uri, name: ar.name, image: img(ar.images, 64) } })
-    + `<div class="pad"><section><h2>Discography</h2>${albums.length
-      ? `<div class="grid">${albums.map(a => card({ kind: 'album', id: a.id, uri: a.uri, title: a.name, sub: `${(a.release_date || '').slice(0, 4)} · ${a.album_type === 'single' ? 'Single' : 'Album'}`, image: img(a.images) })).join('')}</div>`
-      : '<p class="muted">Spotify didn’t return releases for this artist — hit play to hear them.</p>'}</section></div>`;
+  S.heroPin = { type: 'artist', id: ar.id, uri: ar.uri, name: ar.name, image: img(ar.images, 64) };
+  const tab = store.get('artTab', 'album');
+  const firstTab = counts[GROUPS.findIndex(g => g[0] === tab)] ? tab : (GROUPS.find((g, i) => counts[i])?.[0] || 'album');
+  el.innerHTML = `<header class="art-hero" id="artHero">
+      <div class="art-bg" ${photo ? `style="background-image:url('${esc(photo)}')"` : ''}></div>
+      <div class="art-hero-in">
+        ${photo ? `<img class="art-photo" src="${esc(photo)}" alt="">` : `<div class="art-photo ph">${svg('user')}</div>`}
+        <div class="art-head">
+          <div class="hero-kind">Artist</div>
+          <h1 class="art-name">${esc(ar.name)}</h1>
+          <div class="art-stats" id="artStats">${(ar.genres || []).slice(0, 4).map(g => `<span class="chip">${esc(g)}</span>`).join('')}</div>
+        </div>
+      </div>
+    </header>
+    <div class="actions pad art-actions">
+      <button class="big-play" data-hero-play title="Play ${esc(ar.name)}">${svg('play')}</button>
+      ${popular.length > 2 ? `<button class="pin-btn" data-art-shuffle title="Shuffle their popular songs">${svg('shuffle')}<span>Shuffle</span></button>` : ''}
+      <button class="pin-btn" data-art-radio title="Play their popular songs, then similar artists">${svg('radio')}<span>Radio</span></button>
+      <button class="pin-btn follow-btn" id="followBtn" disabled>Follow</button>
+      <button class="pin-btn ${isPinned(S.heroPin) ? 'on' : ''}" data-pin-toggle title="${isPinned(S.heroPin) ? 'Unpin' : 'Pin to sidebar'}">${svg('pin')}<span>${isPinned(S.heroPin) ? 'Pinned' : 'Pin'}</span></button>
+    </div>
+    <div class="pad art-body">
+      <div class="art-main">
+        ${latest ? `<section class="art-latest"><h2>Latest release</h2>
+          <button class="latest-card" data-open="album:${esc(latest.id)}">
+            ${img(latest.images, 300) ? `<img src="${esc(img(latest.images, 300))}" alt="">` : `<div class="ph">${svg('music')}</div>`}
+            <div><div class="hero-kind">${latest.album_type === 'single' ? (latest.total_tracks > 1 ? 'EP · ' + latest.total_tracks + ' songs' : 'Single') : 'Album · ' + latest.total_tracks + ' songs'}</div>
+              <div class="latest-title">${esc(latest.name)}</div><div class="muted">${esc(relDate(latest.release_date))}</div></div>
+          </button></section>` : ''}
+        <section><div class="sec-head"><h2>Popular</h2></div>
+          ${popular.length ? trackTable(popular, { context: null, showAlbum: true, showArt: true }) : '<p class="muted">Spotify didn’t return songs for this artist — hit play to hear them.</p>'}
+          ${popular.length >= 10 ? '<button class="pill-btn ghost" data-art-more>Show more</button>' : ''}</section>
+      </div>
+      <aside class="art-side">
+        <section class="side-card" id="artYou"><h3>You &amp; ${esc(ar.name)}</h3><div class="loading small"><span></span><span></span><span></span></div></section>
+        <section class="side-card" id="artAbout"><h3>About</h3><div class="loading small"><span></span><span></span><span></span></div></section>
+      </aside>
+    </div>
+    <div class="pad"><section class="art-disc"><div class="sec-head"><h2>Discography</h2>
+      <div class="seg st-range">${GROUPS.map(([g, l], i) => counts[i] ? `<button class="${g === firstTab ? 'on' : ''}" data-art-tab="${g}">${l} <em>${counts[i]}${counts[i] >= (g === 'appears_on' ? 30 : 100) ? '+' : ''}</em></button>` : '').join('')}</div></div>
+      <div class="grid" id="artDisc"></div></section>
+      <section id="artSimilar"></section></div>`;
+  const drawDisc = g => {
+    const list = rel[GROUPS.findIndex(x => x[0] === g)] || [];
+    $('#artDisc').innerHTML = list.length ? list.map(a => card({ kind: 'album', id: a.id, uri: a.uri, title: a.name, image: img(a.images),
+      sub: `${(a.release_date || '').slice(0, 4)} · ${g === 'appears_on' ? a.artists?.[0]?.name || '' : a.album_type === 'single' ? (a.total_tracks > 1 ? 'EP' : 'Single') : a.album_type === 'compilation' ? 'Compilation' : 'Album'}` })).join('')
+      : '<p class="muted">Nothing here.</p>';
+  };
+  drawDisc(firstTab);
+  el.querySelector('.art-disc .seg')?.addEventListener('click', e => { const b = e.target.closest('[data-art-tab]'); if (!b) return; el.querySelectorAll('[data-art-tab]').forEach(x => x.classList.toggle('on', x === b)); store.set('artTab', b.dataset.artTab); drawDisc(b.dataset.artTab); });
+  // buttons
+  let more = 10;
+  el.querySelector('.art-actions').addEventListener('click', async e => {
+    if (e.target.closest('[data-art-shuffle]')) { const ok = S.lists[0]?.tracks.filter(t => t.playable) || []; if (ok.length) playUris((await smartOrder(ok)).map(t => t.uri), 0); }
+    if (e.target.closest('[data-art-radio]')) artistRadio(ar, popular);
+    const fb = e.target.closest('#followBtn'); if (fb) setFollow(ar, !fb.classList.contains('on'), fb);
+  });
+  el.querySelector('[data-art-more]')?.addEventListener('click', async e => {
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      const d = await api('/search', { query: { q: `artist:"${ar.name.replace(/"/g, '')}"`, type: 'track', limit: 10, offset: more } }); more += 10;
+      const L = S.lists[0], have = new Set(L.orig.map(t => t.uri));
+      const add = (d.tracks?.items || []).map(norm).filter(t => t && t.artists.some(a => a.id === id) && !have.has(t.uri));
+      add.forEach(t => appendToOpenList(t));
+      if (!add.length || more >= 50) b.remove(); else b.disabled = false;
+    } catch { b.disabled = false; }
+  });
+  // follow state, colour, your history, Last.fm — all after the page is up
+  isFollowing(ar).then(f => { const b = $('#followBtn'); if (!b || !alive()) return; b.disabled = false; if (f) { b.classList.add('on'); b.textContent = 'Following'; } });
+  tintFrom(img(ar.images, 160)).then(c => { if (c && alive()) $('#artHero')?.style.setProperty('--tint', c); });
+  artistHistory(ar.name).then(h => { if (!alive()) return; renderArtistYou(ar, h, popular); });
+  const lf = IS_APP ? await window.amplite.lastfm('artist', { name: ar.name }).catch(() => null) : null;
+  if (!alive()) return;
+  renderArtistAbout(ar, lf?.ok ? lf.artist : null);
+  if (lf?.ok) renderSimilarArtists(lf.artist.similar, alive);
+}
+function renderArtistYou(ar, h, popular) {
+  const box = $('#artYou'); if (!box) return;
+  if (!h || !h.plays) { box.innerHTML = `<h3>You &amp; ${esc(ar.name)}</h3><p class="muted small-note">You haven’t played ${esc(ar.name)} in Amplite yet.${popular.length ? ' Start with their popular songs.' : ''}</p>`; return; }
+  const since = new Date(h.first).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  box.innerHTML = `<h3>You &amp; ${esc(ar.name)}</h3>
+    <div class="you-stats"><div><b>${Math.round(h.ms / 60000).toLocaleString()}</b><span>minutes</span></div><div><b>${h.plays.toLocaleString()}</b><span>plays</span></div><div><b>#${h.rank}</b><span>of your artists</span></div></div>
+    <p class="muted small-note">Listening since ${esc(since)}${h.week ? ` · ${h.week} play${h.week === 1 ? '' : 's'} this week` : ''}</p>
+    ${h.top.length ? `<ol class="you-top">${h.top.map(t => `<li data-you-uri="${esc(t.uri || '')}" title="Double-click to play"><span class="n">${t.plays}×</span><span>${esc(t.title)}</span></li>`).join('')}</ol>` : ''}`;
+  box.addEventListener('dblclick', e => { const li = e.target.closest('[data-you-uri]'); if (li?.dataset.youUri) playUris([li.dataset.youUri], 0); });
+}
+function renderArtistAbout(ar, a) {
+  const box = $('#artAbout'); if (!box) return;
+  const stats = $('#artStats');
+  if (a && stats) {
+    const bits = [];
+    if (a.listeners) bits.push(`<span class="stat"><b>${fmtNum(a.listeners)}</b> listeners</span>`);
+    if (a.playcount) bits.push(`<span class="stat"><b>${fmtNum(a.playcount)}</b> scrobbles</span>`);
+    if (a.userplaycount) bits.push(`<span class="stat you"><b>${a.userplaycount.toLocaleString()}</b> by you</span>`);
+    const genres = (ar.genres?.length ? ar.genres : a.tags.filter(t => !/^(seen live|favou?rites?)$/i.test(t))).slice(0, 4);
+    stats.innerHTML = bits.join('') + genres.map(g => `<span class="chip">${esc(g)}</span>`).join('');
+  }
+  // Last.fm bios end with a "Read more on Last.fm" link; keep the text, drop the tags.
+  const bio = a?.bio ? a.bio.replace(/<a [^>]*>Read more on Last\.fm<\/a>\.?/i, '').replace(/<[^>]+>/g, '').replace(/User-contributed text is available.*$/s, '').trim() : '';
+  if (!bio) {
+    box.innerHTML = `<h3>About</h3><p class="muted small-note">${a ? 'No biography yet.' : IS_APP ? 'Add a Last.fm API key in Settings → Connections for a biography, listener counts and similar artists.' : ''}</p>`;
+    return;
+  }
+  const paras = bio.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
+  box.innerHTML = `<h3>About</h3><div class="bio clamp">${paras.map(p => `<p>${esc(p)}</p>`).join('')}</div>
+<button class="link-btn" data-bio-more hidden>Read more</button>
+    ${a.url ? `<a class="link-btn bio-src" href="${esc(a.url)}" target="_blank" rel="noopener">Last.fm</a>` : ''}`;
+  const bioEl = box.querySelector('.bio'), more = box.querySelector('[data-bio-more]');
+  requestAnimationFrame(() => { if (bioEl.scrollHeight > bioEl.clientHeight + 4) more.hidden = false; else bioEl.classList.remove('clamp'); });
+  box.querySelector('[data-bio-more]')?.addEventListener('click', e => { const b = box.querySelector('.bio'); b.classList.toggle('clamp'); e.currentTarget.textContent = b.classList.contains('clamp') ? 'Read more' : 'Show less'; });
+}
+async function renderSimilarArtists(list, alive) {
+  const box = $('#artSimilar'); if (!box || !list?.length) return;
+  box.innerHTML = '<div class="sec-head"><h2>Fans also like</h2></div><div class="grid" id="simGrid"><div class="loading small"><span></span><span></span><span></span></div></div>';
+  const found = [];
+  for (const s of list.slice(0, 12)) {
+    if (!alive() || found.length >= 8) break;
+    const a = await spotifyArtistByName(s.name); if (a) found.push(a);
+  }
+  if (!alive()) return;
+  const g = $('#simGrid'); if (!g) return;
+  g.innerHTML = found.length ? found.map(a => card({ kind: 'artist', id: a.id, uri: a.uri, title: a.name, sub: 'Artist', image: a.img, round: true })).join('') : '<p class="muted">Couldn’t look them up right now.</p>';
+}
+// Artist radio: their popular songs, then songs by similar artists, shuffled together.
+async function artistRadio(ar, popular) {
+  toast(`Making ${ar.name} radio…`);
+  const res = await similarSongs(popular, { seedTracks: popular.slice(0, 6) }).catch(() => null);
+  const mix = spreadArtists([...popular.slice(0, 8), ...(res?.picks || [])]).filter(t => t.playable);
+  if (!mix.length) return toast('Couldn’t make a radio right now.');
+  playUris(mix.map(t => t.uri), 0);
 }
 
 async function loadPlaylists(fresh = false) {

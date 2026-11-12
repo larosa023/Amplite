@@ -194,6 +194,23 @@ async function lfmSimilar({ tracks = [], artists = [], limit = 25 } = {}) {
   ]);
   return out;
 }
+// Artist page: bio, listener/scrobble counts, your own scrobbles, tags, similar artists, top tracks.
+async function lfmArtist(name) {
+  const params = { artist: name, lang: 'en' }; if (lfm.user) params.username = lfm.user;
+  const [info, top, sim] = await Promise.all([
+    lfmPublic('artist.getInfo', params).catch(() => null),
+    lfmPublic('artist.getTopTracks', { artist: name, limit: '15' }).catch(() => null),
+    lfmPublic('artist.getSimilar', { artist: name, limit: '12' }).catch(() => null),
+  ]);
+  const a = info?.artist;
+  return {
+    url: a?.url || '', listeners: +a?.stats?.listeners || 0, playcount: +a?.stats?.playcount || 0, userplaycount: a?.stats?.userplaycount != null ? +a.stats.userplaycount : null,
+    bio: (a?.bio?.content || a?.bio?.summary || '').slice(0, 4000), tags: (a?.tags?.tag || []).map(t => t.name).slice(0, 8),
+    top: (top?.toptracks?.track || []).map(t => ({ title: t.name, listeners: +t.listeners || 0, playcount: +t.playcount || 0 })),
+    similar: (sim?.similarartists?.artist || []).map(x => ({ name: x.name, match: +x.match || 0 })),
+    user: lfm.user || '',
+  };
+}
 function lfmDisconnect() { connectRun++; lfm.session = ''; lfm.user = ''; lfmSave(); lfmListener(lfmState()); }
 function lfmSetOn(on) { lfm.on = !!on; lfmSave(); lfmListener(lfmState()); if (lfm.on) lfmNowPlaying(true); }
 const lfmReady = () => lfm.on && lfm.session && lfm.key && lfm.secret;
@@ -342,7 +359,7 @@ function nowState() {
 module.exports = {
   init, configure, update, setExtra, nowState,
   discordStatus: () => discord.status, onDiscord: f => { discordListener = f; },
-  lastfm: { state: lfmState, similar: lfmSimilar, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
+  lastfm: { state: lfmState, similar: lfmSimilar, artist: lfmArtist, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
   history: { read: readHistory, append: appendHistory, clear: clearHistory, lastfmPage: lfmRecent, tags: a => lfmPublic('artist.getTopTags', { artist: a }).then(j => (j.toptags?.tag || []).slice(0, 8).map(t => ({ name: t.name, count: +t.count || 0 }))) },
   shutdown() { try { lfmTick(); commitPlay(held?.track || cur.track, held ? held.listened : lfm.listened, true); held = null; } catch {}
     try { if (discord.sock) { frame(1, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: crypto.randomUUID() }); discord.sock.end(); } } catch {} },
