@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0c10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="referrer" content="no-referrer">
+<title>Amplite remote</title>
+<style>
+  :root { --accent: #1db954; --bg: #0b0c10; --text: #fff; --muted: rgba(255,255,255,.6); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; padding: max(18px, env(safe-area-inset-top)) 22px max(22px, env(safe-area-inset-bottom)); }
+  .glow { position: fixed; inset: -20%; background: radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--accent) 45%, transparent), transparent 55%); pointer-events: none; z-index: -1; transition: background .6s; }
+  header { display: flex; align-items: center; gap: 8px; font-weight: 750; font-size: 15px; }
+  header .bars { display: flex; gap: 3px; align-items: flex-end; height: 16px; }
+  header .bars i { width: 4px; background: var(--accent); border-radius: 2px; }
+  header .state { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--muted); }
+  main { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 22px; max-width: 460px; width: 100%; margin: 0 auto; }
+  .art { width: 100%; aspect-ratio: 1; border-radius: 18px; background: rgba(255,255,255,.07) center/cover no-repeat; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
+  .meta { display: flex; align-items: center; gap: 12px; }
+  .meta div { flex: 1; min-width: 0; }
+  .title { font-size: 22px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .artist { font-size: 16px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .like { width: 44px; height: 44px; border: 0; background: none; color: var(--muted); font-size: 26px; }
+  .bar { position: relative; height: 22px; display: flex; align-items: center; touch-action: none; }
+  .bar .track { position: absolute; left: 0; right: 0; height: 5px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; }
+  .bar .fill { height: 100%; width: 0; background: var(--text); border-radius: 3px; }
+  .times { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: -10px; }
+  .ctl { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
+  .ctl button { border: 0; background: none; color: var(--text); width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; }
+  .ctl button:active { background: rgba(255,255,255,.1); }
+  .ctl .play { width: 78px; height: 78px; background: var(--text); color: #000; }
+  .ctl .play:active { transform: scale(.96); background: var(--text); }
+  svg { width: 30px; height: 30px; fill: currentColor; }
+  .play svg { width: 34px; height: 34px; }
+  .vol { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+  .vol svg { width: 20px; height: 20px; flex: none; }
+  input[type=range] { flex: 1; -webkit-appearance: none; appearance: none; height: 5px; border-radius: 3px; background: rgba(255,255,255,.18); outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--text); }
+  .off { text-align: center; color: var(--muted); font-size: 15px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="glow" id="glow"></div>
+<header><span class="bars"><i style="height:10px"></i><i style="height:16px"></i><i style="height:12px"></i></span>Amplite<span class="state" id="state">Connecting…</span></header>
+<main id="main">
+  <div class="art" id="art"></div>
+  <div class="meta"><div><div class="title" id="title">—</div><div class="artist" id="artist"></div></div><button class="like" id="like" aria-label="Like">♡</button></div>
+  <div>
+    <div class="bar" id="seek"><div class="track"><div class="fill" id="fill"></div></div></div>
+    <div class="times"><span id="cur">0:00</span><span id="dur">0:00</span></div>
+  </div>
+  <div class="ctl">
+    <button id="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+    <button class="play" id="play" aria-label="Play or pause"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
+    <button id="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+  </div>
+  <div class="vol"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/></svg><input type="range" id="vol" min="0" max="100" value="50" aria-label="Volume"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16 8a5 5 0 0 1 0 8M18.5 5.5a8.5 8.5 0 0 1 0 13" fill="none" stroke="currentColor" stroke-width="2"/></svg></div>
+</main>
+<script>
+  const key = new URLSearchParams(location.search).get('k') || '';
+  const $ = id => document.getElementById(id);
+  const fmt = ms => { const s = Math.max(0, Math.floor((ms || 0) / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const PLAY = '<path d="M8 5v14l11-7z"/>', PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+  let st = null, at = 0, dragging = false, volBusy = 0, likeBusy = 0, pollT = null, img = '';
+  async function cmd(c) {
+    try { await fetch('/r/cmd?k=' + key, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd: c }) }); } catch {}
+    setTimeout(poll, 300);
+  }
+  const pos = () => !st?.track ? 0 : Math.min(st.track.duration || 0, st.position + (st.paused ? 0 : Date.now() - at));
+  function draw() {
+    const t = st?.track;
+    $('state').textContent = st ? (t ? (st.paused ? 'Paused' : 'Playing') : 'Nothing playing') : 'Can’t reach Amplite';
+    $('title').textContent = t?.title || (st ? 'Nothing playing' : 'Amplite isn’t reachable');
+    $('artist').textContent = t?.artist || (st ? 'Start something in Amplite' : 'Is your PC on and Amplite open?');
+    if ((t?.image || '') !== img) { img = t?.image || ''; $('art').style.backgroundImage = img ? `url("${img}")` : ''; }
+    $('playIcon').innerHTML = st && !st.paused ? PAUSE : PLAY;
+    if (st?.accent) { document.documentElement.style.setProperty('--accent', st.accent); }
+    if (!dragging) { const d = t?.duration || 0, p = pos(); $('fill').style.width = d ? (p / d * 100) + '%' : '0'; $('cur').textContent = fmt(p); $('dur').textContent = fmt(d); }
+    if (typeof st?.volume === 'number' && Date.now() > volBusy) $('vol').value = st.volume;
+    if (st && Date.now() > likeBusy) $('like').textContent = st.liked ? '♥' : '♡';
+    $('like').style.color = $('like').textContent === '♥' ? 'var(--accent)' : '';
+  }
+  async function poll() {
+    try { const r = await fetch('/r/now?k=' + key, { cache: 'no-store' }); st = r.ok ? await r.json() : null; } catch { st = null; }
+    at = Date.now(); draw();
+  }
+  function start() { if (!pollT) { poll(); pollT = setInterval(poll, 2000); } }
+  function stop() { clearInterval(pollT); pollT = null; }
+  document.addEventListener('visibilitychange', () => document.hidden ? stop() : start());
+  setInterval(() => { if (!document.hidden && st?.track && !st.paused) draw(); }, 500);
+  $('play').onclick = () => { if (st) { st.paused = !st.paused; st.position = pos(); at = Date.now(); draw(); } cmd('toggle'); };
+  $('next').onclick = () => cmd('next');
+  $('prev').onclick = () => cmd('prev');
+  $('like').onclick = () => { likeBusy = Date.now() + 2500; $('like').textContent = $('like').textContent === '♥' ? '♡' : '♥'; cmd('like'); };
+  $('vol').oninput = () => { volBusy = Date.now() + 2500; };
+  $('vol').onchange = () => { volBusy = Date.now() + 2500; cmd('vol:=' + $('vol').value); };
+  // tap or drag on the progress bar to seek
+  const seek = $('seek');
+  const frac = e => { const r = seek.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
+  seek.addEventListener('pointerdown', e => { if (!st?.track) return; dragging = true; seek.setPointerCapture(e.pointerId); $('fill').style.width = frac(e) * 100 + '%'; $('cur').textContent = fmt(frac(e) * st.track.duration); });
+  seek.addEventListener('pointermove', e => { if (dragging) { $('fill').style.width = frac(e) * 100 + '%'; $('cur').textContent = fmt(frac(e) * st.track.duration); } });
+  seek.addEventListener('pointerup', e => { if (!dragging) return; dragging = false; const ms = Math.round(frac(e) * st.track.duration); st.position = ms; at = Date.now(); cmd('seek:=' + ms); });
+  start();
+</script>
+</body>
+</html>

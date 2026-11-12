@@ -844,3 +844,51 @@ kbd { white-space:nowrap; }
 .st-share-actions { display:flex; flex-direction:column; gap:10px; min-width:200px; padding-top:6px; }
 .st-share-actions p { font-size:12.5px; line-height:1.5; }
 @media (max-width: 760px) { .st-share-body { flex-direction:column; align-items:center; } }
+
+/* ---- phone remote (Settings → Connections) ---- */
+.remote-row { display:flex; gap:18px; align-items:flex-start; padding:8px 0 4px; }
+.remote-row canvas { width:180px; height:180px; border-radius:12px; flex:none; }
+.remote-help { font-size:12.5px; line-height:1.5; display:flex; flex-direction:column; gap:8px; min-width:0; }
+.remote-help b { color:var(--text); }
+.remote-help code { font:11.5px var(--font-mono, monospace); background:var(--elev); border:1px solid var(--border); padding:6px 8px; border-radius:7px; word-break:break-all; }
+.remote-btns { display:flex; gap:8px; }
+.set-help.bad { color:#ff6b6b; }
+
+/* ---- AI playlist dialog ---- */
+.side-adds { display:inline-flex; gap:2px; }
+.app.side-min .side-adds #aiPlBtn { display:none; }
+.ai-card { width:min(640px, 100%); height:auto; max-height:calc(100vh - 60px); display:flex; flex-direction:column; }
+.ai-card .modal-head h2 { display:flex; align-items:center; gap:8px; }
+.ai-card .modal-head h2 .ic { width:20px; height:20px; color:var(--accent); }
+.ai-body { padding:14px 22px 20px; display:flex; flex-direction:column; gap:12px; min-height:0; }
+.ai-body textarea { border-radius:10px; border:1px solid var(--border); background:var(--elev); color:var(--text); padding:10px 12px; font:inherit; font-size:14px; resize:vertical; outline:none; }
+.ai-body textarea:focus { border-color:var(--accent); }
+.ai-opts { display:flex; align-items:center; gap:14px; flex-wrap:wrap; font-size:13px; }
+.ai-opts label { display:inline-flex; align-items:center; gap:6px; color:var(--muted); }
+.ai-opts select { background:var(--elev); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:5px 8px; font:inherit; max-width:220px; }
+.ai-opts .btn { margin-left:auto; display:inline-flex; align-items:center; gap:6px; }
+.ai-opts .btn .ic { width:15px; height:15px; }
+.ai-out { min-height:60px; overflow:auto; }
+.ai-status { display:flex; align-items:center; gap:12px; color:var(--muted); font-size:13px; padding:10px 0; }
+.ai-msg { font-size:13.5px; line-height:1.55; color:var(--muted); }
+.ai-msg a { color:var(--accent); } .ai-msg code, .ai-msg b { color:var(--text); }
+.ai-result { display:flex; flex-direction:column; gap:10px; }
+.ai-name { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+.ai-name input { flex:1; border-radius:8px; border:1px solid var(--border); background:var(--elev); color:var(--text); padding:7px 10px; font:inherit; font-weight:650; outline:none; }
+.ai-list { max-height:min(46vh, 420px); overflow:auto; display:flex; flex-direction:column; gap:1px; }
+.ai-row { display:grid; grid-template-columns:18px 38px minmax(0,1fr) auto; gap:10px; align-items:center; padding:5px 8px; border-radius:8px; cursor:pointer; }
+.ai-row:hover { background:var(--hover); }
+.ai-row img, .ai-row .ph { width:38px; height:38px; border-radius:5px; object-fit:cover; background:var(--elev); display:grid; place-items:center; }
+.ai-t { min-width:0; display:flex; flex-direction:column; } .ai-t b, .ai-t small { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ai-t b { font-weight:600; font-size:13.5px; } .ai-t small { color:var(--muted); font-size:12px; }
+.ai-d { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.ai-actions { display:flex; gap:8px; align-items:center; }
+.ai-actions .btn { display:inline-flex; align-items:center; gap:6px; } .ai-actions .ic { width:14px; height:14px; }
+
+/* ---- Library ---- */
+.lib { padding-top:76px; padding-bottom:40px; }
+.lib-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
+.lib-head h1 { font-size:34px; font-weight:800; letter-spacing:-.02em; }
+.lib-ctl { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.lib-ctl .st-range em { font-style:normal; color:var(--muted); font-weight:600; margin-left:3px; }
+.lib-ctl select { background:var(--elev); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 8px; font:inherit; font-size:12.5px; }

@@ -72,7 +72,9 @@ function startServer() {
 // and any web page (they always send an Origin header) are refused, and commands need a custom header
 // that browsers can't send cross-site without permission.
 // eq:on / eq:off / eq:<preset> switch the equalizer (used by Mantel's Now Playing widget).
-const API_CMDS = /^(toggle|next|prev|like|vol:[+-]\d{1,3}|seek:[+-]\d{1,7}|eq:[a-z]{1,16})$/;
+const API_CMDS = /^(toggle|next|prev|like|vol:[+-]\d{1,3}|vol:=\d{1,3}|seek:[+-]\d{1,7}|seek:=\d{1,8}|eq:[a-z]{1,16})$/;
+// The phone remote can't change EQ presets (local apps only).
+const REMOTE_CMDS = /^(toggle|next|prev|like|vol:[+-]\d{1,3}|vol:=\d{1,3}|seek:[+-]\d{1,7}|seek:=\d{1,8})$/;
 function handleApi(req, res, url) {
   const json = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
   const host = (req.headers.host || '').toLowerCase();
@@ -281,6 +283,89 @@ ipcMain.on('desk-lyrics-config', (_e, c = {}) => {
 // The lock button on the lyrics strip itself.
 ipcMain.on('desk-lyrics-lock', () => mainWin?.webContents.send('media', 'desklyrics-lock'));
 
+/* ---------------- phone remote ---------------- */
+// Off unless turned on in Settings. A second small server on the home network, at a link with a
+// long random key (shown as a QR code). Without the key nothing is served. Only play/pause, skip,
+// seek, volume and like can be sent.
+const REMOTE_PORT = 43822;
+let remoteSrv = null;
+const remoteFile = () => path.join(app.getPath('userData'), 'remote.json');
+function remoteKey(reset) {
+  let k = ''; try { k = JSON.parse(fs.readFileSync(remoteFile(), 'utf8')).key || ''; } catch {}
+  if (reset || !/^[0-9a-f]{32}$/.test(k)) { k = require('crypto').randomBytes(16).toString('hex'); fs.writeFileSync(remoteFile(), JSON.stringify({ key: k })); }
+  return k;
+}
+function lanAddress() {
+  const all = Object.values(require('os').networkInterfaces()).flat().filter(a => a && a.family === 'IPv4' && !a.internal);
+  const pref = all.find(a => /^192\.168\./.test(a.address)) || all.find(a => /^10\./.test(a.address)) || all.find(a => /^172\.(1[6-9]|2\d|3[01])\./.test(a.address)) || all[0];
+  return pref?.address || '';
+}
+function remoteInfo() { const ip = lanAddress(), k = remoteKey(); return { on: !!remoteSrv, ip, url: ip ? `http://${ip}:${REMOTE_PORT}/r?k=${k}` : '' }; }
+function startRemote() {
+  if (remoteSrv) return Promise.resolve(remoteInfo());
+  const key = remoteKey();
+  const srv = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    const ok = url.searchParams.get('k') === key || req.headers['x-amplite-key'] === key;
+    const json = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
+    if (!ok) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Scan the QR code in Amplite (Settings → Connections → Phone remote) again.'); }
+    if (url.pathname === '/r' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+      return res.end(fs.readFileSync(path.join(ROOT, 'remote.html')));
+    }
+    if (url.pathname === '/r/now' && req.method === 'GET') return json(200, integrations.nowState());
+    if (url.pathname === '/r/cmd' && req.method === 'POST') {
+      let body = ''; req.on('data', c => { body += c; if (body.length > 200) req.destroy(); });
+      req.on('end', () => { let cmd = ''; try { cmd = JSON.parse(body).cmd; } catch {} if (!REMOTE_CMDS.test(cmd || '')) return json(400, { ok: false }); mainWin?.webContents.send('media', cmd); json(200, { ok: true }); });
+      return;
+    }
+    json(404, { ok: false });
+  });
+  return new Promise(resolve => {
+    srv.once('error', () => resolve({ ...remoteInfo(), on: false, error: 'Port 43822 is in use by another program.' }));
+    srv.listen(REMOTE_PORT, '0.0.0.0', () => { remoteSrv = srv; resolve(remoteInfo()); });
+  });
+}
+function stopRemote() { if (remoteSrv) { remoteSrv.close(); remoteSrv.closeAllConnections?.(); remoteSrv = null; } }
+ipcMain.handle('remote', async (_e, action) => {
+  if (action === 'on') return startRemote();
+  if (action === 'off') { stopRemote(); return remoteInfo(); }
+  if (action === 'reset') { const was = !!remoteSrv; stopRemote(); remoteKey(true); return was ? startRemote() : remoteInfo(); }
+  return remoteInfo();
+});
+
+/* ---------------- AI playlists (Ollama, on this PC) ---------------- */
+const OLLAMA = 'http://127.0.0.1:11434';
+ipcMain.handle('ollama', async (_e, action, a = {}) => {
+  try {
+    if (action === 'models') {
+      const r = await net.fetch(OLLAMA + '/api/tags', { signal: AbortSignal.timeout(4000) });
+      const j = await r.json();
+      return { ok: true, models: (j.models || []).filter(m => !/embed/i.test(m.name)).map(m => ({ name: m.name, size: m.size || 0 })) };
+    }
+    if (action === 'playlist') {
+      const n = Math.max(5, Math.min(60, +a.count || 25));
+      const sys = 'You are a music curator. Reply with JSON only, shaped like {"name": "short playlist title", "songs": [{"artist": "...", "title": "..."}]}. '
+        + 'Only real, released songs that are on Spotify, with the main artist and exact song title. No duplicates, no made-up songs. Mix well-known songs with deeper cuts and keep the flow coherent.';
+      const user = `Make a playlist of ${n} songs: ${String(a.prompt || '').slice(0, 600)}` + (a.taste?.length ? `\nFor taste, I listen to: ${a.taste.slice(0, 15).join(', ')}. Use that as a hint, but don't fill the list with only those artists.` : '');
+      const r = await net.fetch(OLLAMA + '/api/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(240000),
+        body: JSON.stringify({ model: a.model, stream: false, format: 'json', options: { temperature: 0.8 }, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] }),
+      });
+      const j = await r.json();
+      if (j.error) return { ok: false, error: j.error };
+      let out = {}; try { out = JSON.parse(j.message?.content || '{}'); } catch { return { ok: false, error: 'The model didn’t return a list. Try again or pick another model.' }; }
+      const songs = (Array.isArray(out.songs) ? out.songs : Array.isArray(out) ? out : []).filter(x => x && x.artist && x.title).slice(0, n + 10)
+        .map(x => ({ artist: String(x.artist).slice(0, 120), title: String(x.title).slice(0, 160) }));
+      return { ok: true, name: String(out.name || '').slice(0, 80), songs };
+    }
+  } catch (e) {
+    const off = /ECONNREFUSED|fetch failed|ERR_CONNECTION_REFUSED/i.test(String(e?.message || e) + String(e?.cause?.code || ''));
+    return { ok: false, offline: off, error: off ? 'Ollama isn’t running.' : (e.name === 'TimeoutError' ? 'The model took too long. Try a smaller model or fewer songs.' : String(e.message || e)) };
+  }
+  return { ok: false };
+});
+
 /* ---------------- share images (stats card) ---------------- */
 // Cover art / artist photos for the card are fetched here so the card canvas isn't "tainted".
 const IMG_HOSTS = /(^|\.)(scdn\.co|spotifycdn\.com|fastly\.net|last\.fm|lastfm\.freetls\.fastly\.net)$/i;
@@ -291,6 +376,14 @@ ipcMain.handle('image-data', async (_e, url) => {
     const type = r.headers.get('content-type') || 'image/jpeg'; if (!/^image\//.test(type)) return null;
     return `data:${type};base64,${Buffer.from(await r.arrayBuffer()).toString('base64')}`;
   } catch { return null; }
+});
+ipcMain.handle('save-text', async (_e, { name, text, kind } = {}) => {
+  if (typeof text !== 'string' || text.length > 20e6) return { ok: false };
+  const ext = kind === 'csv' ? 'csv' : 'txt';
+  const r = await dialog.showSaveDialog(mainWin, { defaultPath: path.join(app.getPath('documents'), String(name || 'Amplite.' + ext).replace(/[\\/:*?"<>|]/g, '')), filters: [{ name: ext === 'csv' ? 'Spreadsheet (CSV)' : 'Text', extensions: [ext] }] });
+  if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+  fs.writeFileSync(r.filePath, text, 'utf8'); shell.showItemInFolder(r.filePath);
+  return { ok: true, path: r.filePath };
 });
 ipcMain.handle('share-image', async (_e, { dataUrl, action, name } = {}) => {
   if (!/^data:image\/png;base64,/.test(dataUrl || '')) return { ok: false };
@@ -465,6 +558,7 @@ ipcMain.on('player-extra', (_e, x = {}) => {
   integrations.setExtra({
     volume: typeof x.volume === 'number' ? x.volume : null,
     accent: /^#[0-9a-f]{6}$/i.test(x.accent || '') ? x.accent : '',
+    liked: !!x.liked,
     // Equalizer state + the preset list, so local apps (Mantel) can show and switch presets.
     eq: e ? {
       available: !!e.available, on: !!e.on,
@@ -532,5 +626,5 @@ app.whenReady().then(async () => {
   globalShortcut.register('MediaStop', () => send('stop'));
 });
 
-app.on('will-quit', () => { globalShortcut.unregisterAll(); integrations.shutdown(); engine.stop(); });
+app.on('will-quit', () => { stopRemote(); globalShortcut.unregisterAll(); integrations.shutdown(); engine.stop(); });
 app.on('window-all-closed', () => app.quit());

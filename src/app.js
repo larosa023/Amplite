@@ -57,7 +57,7 @@ const AMP_DEFAULTS = {
   scroll: 'normal', time: 'elapsed', opacity: 100, onTop: true, snap: true, corner: 'none', eqOpen: false, plOpen: false, lyricLine: false,
 };
 const EQ_DEFAULTS = { enabled: false, preamp: 0, auto: true, preset: 'flat', gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
-const DEFAULTS = { ui: { sideMin: false, lite: false, accent: '', closeToTray: true, startup: 'off', hwAccel: true, taskbar: true, discord: false, discordAppId: '', deskLyrics: false, dlLocked: false, dlSize: 'm', dlLook: 'shadow', dlNext: true, dlKaraoke: true }, eq: EQ_DEFAULTS, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto', hideSpotify: true } };
+const DEFAULTS = { ui: { sideMin: false, lite: false, accent: '', closeToTray: true, startup: 'off', hwAccel: true, taskbar: true, discord: false, discordAppId: '', smartShuffle: true, radio: true, remote: false, deskLyrics: false, dlLocked: false, dlSize: 'm', dlLook: 'shadow', dlNext: true, dlKaraoke: true }, eq: EQ_DEFAULTS, amp: AMP_DEFAULTS, audio: { bitrate: 320, normalise: false, source: 'auto', hideSpotify: true } };
 const clone = o => JSON.parse(JSON.stringify(o));
 const CFG = (() => {
   const saved = store.get('cfg', {}) || {}, c = clone(DEFAULTS);
@@ -106,7 +106,7 @@ const ICONS = {
   queue: '<path d="M3 6h13M3 12h13M3 18h9M17 15v6l5-3z"/>',
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', library: '<path d="M4 4v16M9 4v16"/><path d="m14 4.5 5 15"/>', sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>', phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>', tools: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>', share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7"/>', listadd: '<path d="M3 6h12M3 12h12M3 18h7M18 13v8M14 17h8"/>',
 };
 const svg = n => {
@@ -729,6 +729,7 @@ async function toggleLike() {
   } catch (e) { S.liked = was; renderLike(); toast(e.message); }
 }
 const renderLike = () => {
+  sendExtra();
   $('#likeBtn').classList.toggle('liked', S.liked);
   const al = $('[data-amp="like"]', ampEl);
   if (al) { al.classList.toggle('on', S.liked); al.textContent = S.liked ? '♥' : '♡'; al.title = S.liked ? 'Remove from Liked Songs' : 'Save to Liked Songs'; }
@@ -782,6 +783,7 @@ function updatePlayerUI() {
   if ((n?.uri || null) !== S.likedUri) {
     checkLiked(n?.uri || null);
     syncLyricsForTrack();
+    setTimeout(radioCheck, 2500);
     if (D.tab === 'queue') setTimeout(renderQueue, 400);
     if (CFG.amp.plOpen) setTimeout(renderAmpPl, PLW.tab === 'queue' ? 500 : 0);
   }
@@ -826,10 +828,10 @@ function sendExtra() {
   if (!IS_APP) return;
   const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
   const eq = { available: eqAvailable(), on: !!CFG.eq.enabled, preset: CFG.eq.preset || 'custom' };
-  const key = Math.round(S.volume * 100) + accent + JSON.stringify(eq);
+  const key = Math.round(S.volume * 100) + accent + JSON.stringify(eq) + (S.liked ? 'L' : '');
   if (key === S.extraKey) return; S.extraKey = key;
   window.amplite.playerExtra?.({
-    volume: Math.round(S.volume * 100), accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '',
+    volume: Math.round(S.volume * 100), accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '', liked: !!S.liked,
     eq: { ...eq, presets: Object.entries(EQ_PRESETS).map(([k, [n]]) => [k, n]) },
   });
 }
@@ -854,7 +856,48 @@ async function viewStats(el, _arg, alive) {
   if (!alive()) return;
   await m.viewStats(el, { meName: S.me?.display_name || S.me?.id || '', api, bgApi: (p, o = {}) => api(p, { ...o, bg: true }), rateLimited, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive });
 }
-const VIEWS = { home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
+// Library: saved albums and artists you follow.
+async function viewLibrary(el, _arg, alive) {
+  const [albums, artists] = await Promise.all([
+    pageAll('/me/albums', { limit: 50 }, 600).catch(() => null),
+    (async () => { // followed artists use cursor paging
+      let out = [], url = '/me/following', query = { type: 'artist', limit: 50 };
+      for (let i = 0; i < 12; i++) {
+        const d = await api(url, { query }); const a = d?.artists; if (!a) break;
+        out = out.concat(a.items || []); if (!a.next || !a.cursors?.after) break;
+        query = { type: 'artist', limit: 50, after: a.cursors.after };
+      }
+      return out;
+    })().catch(() => null),
+  ]);
+  if (!alive()) return;
+  const tab = store.get('libTab', 'albums');
+  const al = (albums || []).map(i => i.album).filter(Boolean), ar = artists || [];
+  const sec = (k, label, n) => `<button class="${tab === k ? 'on' : ''}" data-libtab="${k}">${label}${n != null ? ` <em>${n}</em>` : ''}</button>`;
+  el.innerHTML = `<div class="pad lib"><header class="lib-head"><h1>Your library</h1>
+      <div class="lib-ctl"><div class="seg st-range">${sec('albums', 'Albums', albums ? al.length : null)}${sec('artists', 'Artists', artists ? ar.length : null)}</div>
+      <div class="filter-box">${svg('search')}<input id="libFilter" type="search" placeholder="Filter" autocomplete="off" spellcheck="false"></div>
+      <select id="libSort" title="Sort"><option value="recent">Recently added</option><option value="name">Name</option>${tab === 'albums' ? '<option value="artist">Artist</option>' : ''}</select></div></header>
+    <div class="grid lib-grid" id="libGrid"></div></div>`;
+  const sortSel = $('#libSort'); sortSel.value = store.get('libSort:' + tab, 'recent'); if (!sortSel.value) sortSel.value = 'recent';
+  const draw = () => {
+    const q = ($('#libFilter')?.value || '').trim().toLowerCase(), by = sortSel.value;
+    let items = tab === 'albums'
+      ? al.map((a, i) => ({ i, html: () => card({ kind: 'album', id: a.id, uri: a.uri, title: a.name, sub: a.artists?.map(x => x.name).join(', '), image: img(a.images, 300) }), name: a.name, artist: a.artists?.[0]?.name || '', q: `${a.name} ${a.artists?.map(x => x.name).join(' ')}`.toLowerCase() }))
+      : ar.map((a, i) => ({ i, html: () => card({ kind: 'artist', id: a.id, uri: a.uri, title: a.name, sub: 'Artist', image: img(a.images, 300), round: true }), name: a.name, artist: a.name, q: a.name.toLowerCase() }));
+    if (q) items = items.filter(x => x.q.includes(q));
+    if (by === 'name') items.sort((a, b) => a.name.localeCompare(b.name));
+    if (by === 'artist') items.sort((a, b) => a.artist.localeCompare(b.artist) || a.name.localeCompare(b.name));
+    const failed = tab === 'albums' ? !albums : !artists;
+    $('#libGrid').innerHTML = items.length ? items.map(x => x.html()).join('')
+      : `<p class="muted">${failed ? 'Couldn’t load this from Spotify. Try again in a minute.' : q ? 'Nothing matches.' : tab === 'albums' ? 'Albums you save in Spotify show up here.' : 'Artists you follow show up here.'}</p>`;
+  };
+  draw();
+  let ft; $('#libFilter').addEventListener('input', () => { clearTimeout(ft); ft = setTimeout(draw, 80); });
+  sortSel.onchange = () => { store.set('libSort:' + tab, sortSel.value); draw(); };
+  el.querySelector('.lib-ctl').addEventListener('click', e => { const b = e.target.closest('[data-libtab]'); if (b && b.dataset.libtab !== tab) { store.set('libTab', b.dataset.libtab); navigate('library', '', false); } });
+}
+const VIEWS = { library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
 let navToken = 0;
 
 async function navigate(name, arg = '', push = true) {
@@ -954,9 +997,46 @@ function applyListSort(key) {
   store.set('sort:' + S.cur?.name, key);
   applyListFilter(); markPlaying();
 }
+// Smart shuffle: random, but songs by the same artist are spread apart and anything you played in
+// the last two days goes to the back. Plain Spotify shuffle if it's turned off in Settings.
+const RECENT = { at: 0, uris: new Set() };
+async function recentlyPlayed() {
+  if (!IS_APP) return RECENT.uris;
+  if (Date.now() - RECENT.at > 5 * 60000) {
+    try {
+      const r = await window.amplite.history('read'), since = Date.now() / 1000 - 2 * 86400;
+      RECENT.uris = new Set((r.items || []).filter(x => x.ts >= since && x.uri).map(x => x.uri)); RECENT.at = Date.now();
+    } catch {}
+  }
+  return RECENT.uris;
+}
+function shuffled(a) { const s = [...a]; for (let i = s.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [s[i], s[j]] = [s[j], s[i]]; } return s; }
+function spreadArtists(list) {
+  // Greedy: take the next song whose artist isn't one of the last two played; look a little ahead.
+  const pool = shuffled(list), out = [], key = t => (t.artists[0]?.id || t.artists[0]?.name || '').toLowerCase();
+  while (pool.length) {
+    const recent = out.slice(-2).map(key);
+    let k = pool.findIndex((t, i) => i < 40 && !recent.includes(key(t)));
+    if (k < 0) k = 0;
+    out.push(pool.splice(k, 1)[0]);
+  }
+  return out;
+}
+async function smartOrder(tracks) {
+  const recent = await recentlyPlayed();
+  const fresh = tracks.filter(t => !recent.has(t.uri)), stale = tracks.filter(t => recent.has(t.uri));
+  return [...spreadArtists(fresh), ...spreadArtists(stale)];
+}
 async function shufflePlay() {
   const L = S.lists[0]; if (!L) return;
   const ok = L.tracks.filter(t => t.playable); if (!ok.length) return;
+  if (CFG.ui.smartShuffle !== false && ok.length > 2) {
+    const order = (await smartOrder(ok)).slice(0, 300);
+    await playUris(order.map(t => t.uri), 0);
+    try { if (S.now?.shuffle) { await api('/me/player/shuffle', { method: 'PUT', query: { state: false } }); S.now.shuffle = false; updatePlayerUI(); } } catch {}
+    toast(`Smart shuffle: ${order.length} songs, artists spread out${RECENT.uris.size ? ', recent plays last' : ''}`);
+    return;
+  }
   if (L.context) {
     await startPlayback({ context_uri: L.context, offset: { position: Math.floor(Math.random() * L.orig.length) } });
     try { await api('/me/player/shuffle', { method: 'PUT', query: { state: true } }); if (S.now) S.now.shuffle = true; updatePlayerUI(); } catch {}
@@ -1095,7 +1175,8 @@ async function viewPlaylist(el, id, alive) {
     pin: { type: 'playlist', id: pl.id, uri: pl.uri, name: pl.name, image: img(pl.images, 64) },
     desc: stripHtml(pl.description), meta: `${esc(pl.owner?.display_name || '')} · <span id="plCount">${total}</span> songs`,
     extra: editable ? `<button class="pin-btn" data-add-songs title="Add songs to this playlist">${svg('plus')}<span>Add songs</span></button>` : '',
-    extra2: canEdit(pl) && pl.owner?.id === S.me?.id ? `<button class="pin-btn icon-only" data-edit-pl title="Rename, change description or delete">${svg('edit')}</button>` : '',
+    extra2: (canEdit(pl) && pl.owner?.id === S.me?.id ? `<button class="pin-btn icon-only" data-edit-pl title="Rename, change description or delete">${svg('edit')}</button>` : '')
+      + (tracks.length ? `<button class="pin-btn icon-only" data-pl-tools title="Playlist tools">${svg('tools')}</button>` : ''),
   }) + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri, removable: editable })
     : editable ? `<div class="empty small"><p>This playlist is empty.</p><button class="pill-btn" data-add-songs>${svg('plus')} Add songs</button></div>` : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`
     + (tracks.length ? `<section class="recs pad" id="recs" data-pl="${esc(pl.id)}"></section>` : '');
@@ -1412,6 +1493,205 @@ function bindDrag() {
   });
 }
 
+// ---- playlist tools: duplicates, save order, add from another playlist, export ----
+const isLocalFile = u => /^spotify:local:/.test(u || '');
+// Replace a playlist's contents in one go (keeps nothing of the old order). Used for "save order" and undo.
+async function rewritePlaylist(pid, uris) {
+  await api(`/playlists/${pid}/items`, { method: 'PUT', body: { uris: uris.slice(0, 100) } });
+  for (let i = 100; i < uris.length; i += 100) await api(`/playlists/${pid}/items`, { method: 'POST', body: { uris: uris.slice(i, i + 100) } });
+  playlistChanged(pid);
+}
+function findDuplicates(tracks) {
+  const byUri = new Map(), byKey = new Map(), exact = [], near = [];
+  tracks.forEach(t => { byUri.set(t.uri, (byUri.get(t.uri) || 0) + 1); });
+  for (const [u, n] of byUri) if (n > 1 && !isLocalFile(u)) exact.push(u);
+  // Same song under another ID (single vs album version): drop the later one, if it's only there once.
+  for (const t of tracks) {
+    const k = recKey(t.artists[0]?.name, t.name); if (!k || isLocalFile(t.uri)) continue;
+    const first = byKey.get(k);
+    if (!first) byKey.set(k, t.uri);
+    else if (first !== t.uri && byUri.get(t.uri) === 1 && !near.includes(t.uri)) near.push(t.uri);
+  }
+  const extra = exact.reduce((n, u) => n + byUri.get(u) - 1, 0) + near.length;
+  return { exact, near, extra };
+}
+async function removeDuplicates() {
+  const L = S.lists[0], pl = S.pl; if (!L || !pl?.editable) return;
+  const d = findDuplicates(L.orig); if (!d.extra) return toast('No duplicates in this playlist.');
+  const before = L.orig.map(t => t.uri);
+  toast(`Removing ${d.extra} duplicate${d.extra === 1 ? '' : 's'}…`);
+  try {
+    let arr = [...before];
+    for (const u of d.near) { await removeFromPlaylist(pl.id, [u]); arr = arr.filter(x => x !== u); }
+    // Spotify removes every copy of a song, so put one back where the first copy was
+    // (only that song's "date added" changes).
+    for (const u of d.exact) {
+      const at = arr.indexOf(u);
+      await removeFromPlaylist(pl.id, [u]);
+      arr = arr.filter(x => x !== u);
+      await addToPlaylist(pl.id, [u], at); arr.splice(at, 0, u);
+    }
+    if (S.pl?.id === pl.id) navigate('playlist', pl.id, false);
+    toast(`Removed ${d.extra} duplicate${d.extra === 1 ? '' : 's'}`, { label: 'Undo', run: () => undoRewrite(pl, before) });
+  } catch (e) { if (!needsEditPermission(e)) toast(`Couldn’t finish: ${e.message}`); if (S.pl?.id === pl.id) navigate('playlist', pl.id, false); }
+}
+async function undoRewrite(pl, uris) {
+  try { await rewritePlaylist(pl.id, uris); if (S.pl?.id === pl.id) navigate('playlist', pl.id, false); toast('Restored'); }
+  catch (e) { toast(`Couldn’t restore: ${e.message}`); }
+}
+async function saveOrder() {
+  const L = S.lists[0], pl = S.pl; if (!L || !pl?.editable) return;
+  if (L.tracks === L.orig) return toast('Pick a sort first (the Sort menu), then save it.');
+  if (L.orig.some(t => isLocalFile(t.uri))) return toast('This playlist has local files, which Spotify can’t re-save. Reorder it in the Spotify app instead.');
+  const before = L.orig.map(t => t.uri), after = L.tracks.map(t => t.uri);
+  try {
+    toast('Saving the new order…');
+    await rewritePlaylist(pl.id, after);
+    store.set('sort:' + S.cur?.name, 'default');
+    if (S.pl?.id === pl.id) navigate('playlist', pl.id, false);
+    toast('Order saved to the playlist', { label: 'Undo', run: () => undoRewrite(pl, before) });
+  } catch (e) { if (!needsEditPermission(e)) toast(`Couldn’t save the order: ${e.message}`); }
+}
+async function addFromPlaylist(src) {
+  const L = S.lists[0], pl = S.pl; if (!L || !pl?.editable) return;
+  try {
+    const items = src.liked ? await pageAll('/me/tracks', { limit: 50 }, 2000) : await pageAll(`/playlists/${src.id}/items`, { limit: 50 }, 2500);
+    const have = new Set(L.orig.map(t => t.uri));
+    const add = items.map(i => norm(i.item || i.track)).filter(t => t && !isLocalFile(t.uri) && !have.has(t.uri) && !have.has(t.uri) && have.add(t.uri));
+    if (!add.length) return toast(`Everything in ${src.name} is already here.`);
+    await addTracksTo({ id: pl.id, name: pl.name }, add);
+  } catch (e) { if (!needsEditPermission(e)) toast(`Couldn’t read ${src.name}: ${e.message}`); }
+}
+function exportPlaylist() {
+  const L = S.lists[0]; if (!L) return;
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = [['#', 'Title', 'Artist', 'Album', 'Length', 'Added', 'Link'].join(',')]
+    .concat(L.tracks.map((t, i) => [i + 1, q(t.name), q(t.artists.map(a => a.name).join(', ')), q(t.album?.name), fmt(t.duration), (t.added || '').slice(0, 10), t.id ? 'https://open.spotify.com/track/' + t.id : ''].join(',')));
+  window.amplite.saveText({ name: (S.pl?.name || 'Playlist') + '.csv', text: '\ufeff' + rows.join('\r\n'), kind: 'csv' })
+    .then(r => { if (r?.ok) toast('Exported'); });
+}
+function playlistTools(e) {
+  const L = S.lists[0], pl = S.pl; if (!L) return;
+  const ed = !!pl?.editable, d = ed ? findDuplicates(L.orig) : { extra: 0 };
+  const others = editablePlaylists().filter(p => p.id !== pl?.id);
+  const items = [];
+  if (ed) {
+    items.push({ icon: 'x', label: d.extra ? `Remove ${d.extra} duplicate${d.extra === 1 ? '' : 's'}` : 'No duplicates', run: d.extra ? removeDuplicates : () => {} });
+    items.push({ icon: 'check', label: L.tracks === L.orig ? 'Save sort order (pick a sort first)' : `Save this order (${SORTS[$('#listSort')?.value]?.[0] || 'sorted'})`, run: saveOrder });
+    items.push({ icon: 'listadd', label: 'Add songs from another playlist…', run: () => setTimeout(() => showCtx(e, [
+      { icon: 'heart', label: 'Liked Songs', run: () => addFromPlaylist({ liked: true, name: 'Liked Songs' }) },
+      ...(others.length ? ['-'] : []), ...others.slice(0, 40).map(p => ({ icon: 'music', label: p.name, run: () => addFromPlaylist(p) })),
+    ]), 0) });
+    items.push('-');
+  }
+  if (IS_APP) items.push({ icon: 'share', label: 'Export as spreadsheet (CSV)…', run: exportPlaylist });
+  showCtx(e, items);
+}
+
+// ---- AI playlists: describe it, a local model (Ollama) picks songs, Amplite finds them on Spotify ----
+const AI = { busy: false, seq: 0, found: [], missing: [], name: '' };
+async function tasteArtists() {
+  try {
+    const r = await window.amplite.history('read'), since = Date.now() / 1000 - 90 * 86400, c = new Map();
+    for (const x of r.items || []) if (x.ts >= since) for (const a of (x.artists?.length ? x.artists : [x.artist])) if (a) c.set(a, (c.get(a) || 0) + (x.ms || 200000));
+    return [...c.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(x => x[0]);
+  } catch { return []; }
+}
+async function openAiDialog() {
+  $('#aiDialog')?.remove();
+  const m = document.createElement('div'); m.id = 'aiDialog'; m.className = 'modal';
+  m.innerHTML = `<div class="modal-card ai-card"><header class="modal-head"><h2>${svg('sparkle')} Make a playlist</h2><button class="round-btn" data-ai-close title="Close (Esc)">${svg('x')}</button></header>
+    <div class="ai-body">
+      <textarea id="aiPrompt" rows="3" maxlength="600" placeholder="Describe it — e.g. “late-night drive, moody 2000s rock”, “rainy Sunday coffee”, “gym, high energy hip-hop”"></textarea>
+      <div class="ai-opts">
+        <label>Songs <select id="aiCount"><option>15</option><option selected>25</option><option>40</option></select></label>
+        <label>Model <select id="aiModel"><option value="">Looking for Ollama…</option></select></label>
+        <label class="ai-check"><input type="checkbox" id="aiTaste" checked> Lean on my taste</label>
+        <button class="btn primary" id="aiGo">${svg('sparkle')} Make it</button>
+      </div>
+      <div id="aiOut" class="ai-out"><p class="muted small-note">Runs on your own PC through Ollama — free and private. Songs are then looked up on Spotify.</p></div>
+    </div></div>`;
+  document.body.append(m);
+  const close = () => { AI.seq++; m.remove(); document.removeEventListener('keydown', onEsc, true); };
+  const onEsc = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  document.addEventListener('keydown', onEsc, true);
+  m.addEventListener('click', e => {
+    if (e.target === m || e.target.closest('[data-ai-close]')) return close();
+    if (e.target.closest('#aiGo, #aiGo2')) return aiGenerate();
+    if (e.target.closest('#aiSave')) return aiSave(close);
+    if (e.target.closest('#aiPlay')) { const sel = aiSelected(); if (sel.length) { playUris(sel.map(t => t.uri), 0); close(); } return; }
+  });
+  m.addEventListener('dblclick', e => { const r = e.target.closest('[data-ai-i]'); if (r && !e.target.closest('input')) { const t = AI.found[+r.dataset.aiI]; if (t) playUris([t.uri], 0); } });
+  $('#aiPrompt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) aiGenerate(); });
+  setTimeout(() => $('#aiPrompt')?.focus(), 0);
+  // models
+  const r = await window.amplite.ollama('models');
+  const sel = $('#aiModel'); if (!sel) return;
+  if (!r?.ok || !r.models.length) {
+    sel.innerHTML = '<option value="">—</option>'; $('#aiGo').disabled = true;
+    $('#aiOut').innerHTML = r?.ok
+      ? `<p class="ai-msg">Ollama is running but has no models yet. In a terminal run <code>ollama pull llama3.1</code> (or any chat model), then open this again.</p>`
+      : `<p class="ai-msg">Ollama isn’t running on this PC. Install it from <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com</a>, run <code>ollama pull llama3.1</code>, then open this again.</p>`;
+    return;
+  }
+  const saved = store.get('aiModel', '');
+  // Prefer the saved model, else a mid-size chat model.
+  const pick = r.models.find(x => x.name === saved) || r.models.find(x => /llama3|qwen|mistral|gemma|phi/i.test(x.name)) || r.models[0];
+  sel.innerHTML = r.models.map(x => `<option value="${esc(x.name)}" ${x.name === pick.name ? 'selected' : ''}>${esc(x.name)}${x.size ? ` (${(x.size / 1e9).toFixed(1)} GB)` : ''}</option>`).join('');
+  sel.onchange = () => store.set('aiModel', sel.value);
+}
+const aiSelected = () => AI.found.filter((t, i) => $(`#aiChk${i}`)?.checked);
+async function aiGenerate() {
+  const prompt = $('#aiPrompt').value.trim(), out = $('#aiOut'), go = $('#aiGo');
+  if (!prompt) { $('#aiPrompt').focus(); return; }
+  if (AI.busy) return;
+  const seq = ++AI.seq; AI.busy = true; go.disabled = true;
+  const say = h => { if (seq === AI.seq && out.isConnected) out.innerHTML = h; };
+  try {
+    const model = $('#aiModel').value, count = +$('#aiCount').value;
+    say(`<div class="ai-status"><div class="loading small"><span></span><span></span><span></span></div>Asking ${esc(model)} for ${count} songs…</div>`);
+    const taste = $('#aiTaste').checked ? await tasteArtists() : [];
+    const r = await window.amplite.ollama('playlist', { model, prompt, count, taste });
+    if (seq !== AI.seq) return;
+    if (!r?.ok) return say(`<p class="ai-msg">${esc(r?.error || 'Something went wrong.')}</p>`);
+    if (!r.songs.length) return say('<p class="ai-msg">The model didn’t suggest any songs. Try rewording it or another model.</p>');
+    AI.found = []; AI.missing = []; AI.name = r.name || prompt.slice(0, 60);
+    let done = 0;
+    const seen = new Set();
+    await pool(r.songs, 3, async s => {
+      const t = await resolveRec(s.artist, s.title);
+      done++;
+      if (t && !seen.has(t.uri)) { seen.add(t.uri); AI.found.push(t); } else if (!t) AI.missing.push(s);
+      say(`<div class="ai-status"><div class="loading small"><span></span><span></span><span></span></div>Finding songs on Spotify… ${done} of ${r.songs.length}</div>`);
+    });
+    if (seq !== AI.seq) return;
+    // keep the model's order
+    const order = new Map(); r.songs.forEach((s, i) => { const k = recKey(s.artist, s.title); if (!order.has(k)) order.set(k, i); });
+    AI.found.sort((a, b) => (order.get(recKey(a.artists[0]?.name, a.name)) ?? 999) - (order.get(recKey(b.artists[0]?.name, b.name)) ?? 999));
+    if (!AI.found.length) return say(`<p class="ai-msg">None of the suggested songs could be found on Spotify${rateLimited() ? ' (Spotify is limiting lookups right now — try again in a few minutes)' : ''}.</p>`);
+    say(`<div class="ai-result">
+      <label class="ai-name">Name <input id="aiName" maxlength="100" value="${esc(AI.name)}"></label>
+      <div class="ai-list">${AI.found.map((t, i) => `<label class="ai-row" data-ai-i="${i}"><input type="checkbox" id="aiChk${i}" checked>
+        ${t.album?.image ? `<img src="${esc(t.album.image)}" alt="" loading="lazy">` : `<span class="ph">${svg('music')}</span>`}
+        <span class="ai-t"><b>${esc(t.name)}</b><small>${esc(t.artists.map(a => a.name).join(', '))}</small></span><span class="ai-d">${fmt(t.duration)}</span></label>`).join('')}</div>
+      ${AI.missing.length ? `<p class="muted small-note">Not found on Spotify: ${AI.missing.slice(0, 8).map(s => esc(`${s.artist} – ${s.title}`)).join(' · ')}${AI.missing.length > 8 ? ` and ${AI.missing.length - 8} more` : ''}</p>` : ''}
+      <div class="ai-actions"><button class="btn" id="aiGo2">Try again</button><span class="flex1"></span>
+        <button class="btn" id="aiPlay">${svg('play')} Play now</button><button class="btn primary" id="aiSave">Save as playlist</button></div></div>`);
+  } finally { if (seq === AI.seq) { AI.busy = false; if (go.isConnected) go.disabled = false; } }
+}
+async function aiSave(close) {
+  const tracks = aiSelected(), name = ($('#aiName')?.value || AI.name || 'AI playlist').trim();
+  if (!tracks.length) return toast('Tick at least one song.');
+  const b = $('#aiSave'); b.disabled = true;
+  try {
+    const pl = await api('/me/playlists', { method: 'POST', body: { name, description: `Made with Amplite: ${($('#aiPrompt')?.value || '').slice(0, 200)}`, public: false } });
+    for (let i = 0; i < tracks.length; i += 100) await addToPlaylist(pl.id, tracks.slice(i, i + 100).map(t => t.uri));
+    close(); toast(`Saved “${name}” (${tracks.length} songs)`);
+    await refreshPlaylists();
+    navigate('playlist', pl.id);
+  } catch (e) { b.disabled = false; if (!needsEditPermission(e)) toast(`Couldn’t save: ${e.message}`); }
+}
+
 // ---- create / rename / delete playlists ----
 let plEditing = null; // null = creating a new one
 function openPlDialog(pl = null) {
@@ -1481,6 +1761,7 @@ async function deletePlaylist() {
 }
 function bindPlDialog() {
   $('#newPlBtn').onclick = e => { e.stopPropagation(); openPlDialog(null); };
+  const ai = $('#aiPlBtn'); if (ai) ai.onclick = e => { e.stopPropagation(); openAiDialog(); };
   $('#plForm').onsubmit = e => { e.preventDefault(); savePlDialog(); };
   $('#plDelete').onclick = deletePlaylist;
   $('#plDialog').addEventListener('click', e => { if (e.target.id === 'plDialog' || e.target.closest('[data-close-pl]')) { S.pendingAdd = null; closePlDialog(); } });
@@ -1599,14 +1880,18 @@ async function pool(items, n, fn) { const out = []; let i = 0; await Promise.all
 
 async function buildRecs(id) {
   const L = S.lists[0], st = REC.byPl.get(id); if (!L) return null;
-  const tracks = L.orig, round = st?.round || 0, off = (round % 5) * 10; // each Refresh digs further into artists' songs
-  const seen = new Set([...tracks.map(t => t.uri), ...(st?.shown || [])]);
+  return similarSongs(L.orig, { exclude: st?.shown || [], round: st?.round || 0 });
+}
+// Songs like `tracks` (that aren't in it or `exclude`). Used by Recommended and by radio.
+async function similarSongs(tracks, { exclude = [], round = 0, seedTracks = null } = {}) {
+  const off = (round % 5) * 10; // each Refresh digs further into artists' songs
+  const seen = new Set([...tracks.map(t => t.uri), ...exclude]);
   const seenKey = new Set(tracks.map(t => recKey(t.artists[0]?.name, t.name)));
   const have = t => seen.has(t.uri) || seenKey.has(recKey(t.artists[0]?.name, t.name));
   // Seeds: a few recent additions plus a random handful (different every refresh).
   const shuffled = [...tracks].filter(t => t.artists[0]?.name).sort(() => Math.random() - 0.5);
   const recent = [...tracks].filter(t => t.added).sort((a, b) => (b.added || '').localeCompare(a.added || '')).slice(0, 2);
-  const seeds = [...new Set([...recent, ...shuffled])].slice(0, 6);
+  const seeds = seedTracks?.length ? seedTracks.slice(0, 6) : [...new Set([...recent, ...shuffled])].slice(0, 6);
   const counts = new Map(); tracks.forEach(t => { const a = t.artists[0]?.name; if (a) counts.set(a, (counts.get(a) || 0) + 1); });
   const topArtists = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(x => x[0]);
   const picks = [], perArtist = new Map();
@@ -1639,6 +1924,8 @@ async function buildRecs(id) {
   if (picks.length < 6) {
     const lists = await pool(topArtists.slice(0, 6), 2, a => artistPicks(a, have, 3, off));
     for (let i = 0; i < 3; i++) lists.forEach(l => take(l[i])); // interleave artists
+    // Very few artists to go on (e.g. radio after one artist's songs): allow a few more songs each.
+    if (picks.length < 6) { perArtist.clear(); for (let i = 0; i < 3; i++) lists.forEach(l => take(l[i])); }
   }
   return { picks, source };
 }
@@ -1687,6 +1974,36 @@ async function recAction(btn) {
   if (!S.lists[0]?.orig.some(x => x.uri === t.uri)) { btn.disabled = false; return; } // failed
   st.picks.splice(i, 1); renderRecs(id);
   if (st.picks.length < 4) loadRecs(id);
+}
+
+// ---- radio: when a playlist or album runs out, keep going with similar songs ----
+// Checked once per song: if Spotify's queue is (nearly) empty, the list is ending, so similar songs
+// (same engine as Recommended) are added to the queue. If Spotify's own autoplay already filled the
+// queue, nothing happens.
+const RADIO = { checked: '', recent: [], queued: new Set(), busy: false, told: 0 };
+async function radioCheck() {
+  const n = S.now;
+  if (!n?.uri || n.paused) return;
+  if (RADIO.recent.at(-1)?.uri !== n.uri) { RADIO.recent.push({ uri: n.uri, name: n.name, artists: n.artists }); if (RADIO.recent.length > 12) RADIO.recent.shift(); }
+  if (!CFG.ui.radio || n.repeat || RADIO.busy || RADIO.checked === n.uri || rateLimited()) return;
+  RADIO.checked = n.uri;
+  let q; try { q = await api('/me/player/queue', { bg: true }); } catch { return; }
+  if (S.now?.uri !== n.uri) return;
+  const upcoming = (q?.queue || []).filter(x => x && x.uri !== n.uri);
+  if (upcoming.length > 1) return;
+  RADIO.busy = true;
+  try {
+    const seeds = [...RADIO.recent].reverse().filter(t => t.artists?.[0]?.name);
+    const res = await similarSongs(seeds, { exclude: [...RADIO.queued], seedTracks: seeds });
+    const picks = (res?.picks || []).slice(0, 10);
+    let added = 0;
+    for (const t of picks) {
+      try { await api('/me/player/queue', { method: 'POST', query: { uri: t.uri } }); RADIO.queued.add(t.uri); added++; } catch { break; }
+    }
+    if (RADIO.queued.size > 500) RADIO.queued = new Set([...RADIO.queued].slice(-300));
+    if (added && Date.now() - RADIO.told > 30 * 60000) { RADIO.told = Date.now(); toast(`Radio: added ${added} similar songs so the music keeps going`, { label: 'Turn off', run: () => setK('ui.radio', false) }); }
+    if (added && D.tab === 'queue') setTimeout(renderQueue, 400);
+  } finally { RADIO.busy = false; }
 }
 
 // ---- mini amp playlist window (Winamp-style "PL") ----
@@ -2307,6 +2624,7 @@ function bind() {
     const rb = e.target.closest('[data-rec-add], [data-rec-play], [data-rec-queue]');
     if (rb) { recAction(rb); return; }
     if (e.target.closest('[data-edit-pl]')) { openPlDialog(S.pl); return; }
+    const pt = e.target.closest('[data-pl-tools]'); if (pt) { playlistTools(e); return; }
     const rm = e.target.closest('[data-rm]');
     if (rm) { e.stopPropagation(); removeRow(rm.closest('.trow')); return; }
     const num = e.target.closest('.tnum');
@@ -2431,6 +2749,7 @@ function applyAccent() {
 }
 function applyUI() {
   applyAccent();
+  if (IS_APP && S.remoteOn !== !!CFG.ui.remote) { S.remoteOn = !!CFG.ui.remote; applyRemote().then(i => { if (!$('#settings').classList.contains('hidden')) renderRemote(i); }); }
   applyDeskLyrics();
   if (IS_APP) window.amplite.setPrefs({ closeToTray: CFG.ui.closeToTray, startup: CFG.ui.startup, hwAccel: CFG.ui.hwAccel, taskbar: CFG.ui.taskbar, discord: CFG.ui.discord, discordAppId: CFG.ui.discordAppId });
   $('#app').classList.toggle('side-min', !!CFG.ui.sideMin);
@@ -2466,6 +2785,8 @@ function settingsHTML() {
       + (IS_APP ? grp('Windows', seg('ui.startup', 'Start with Windows', [['off', 'Off'], ['normal', 'Open window'], ['tray', 'In tray'], ['amp', 'Mini amp']], 'Launch Amplite when you sign in to Windows')
         + sw('ui.closeToTray', 'Close to tray', 'Closing the window keeps Amplite playing in the system tray')
         + sw('ui.taskbar', 'Taskbar controls', 'Previous / play / next buttons on Amplite’s taskbar preview, and song progress on its taskbar icon')) : '')
+      + grp('Playback', sw('ui.smartShuffle', 'Smart shuffle', 'The shuffle button on playlists spreads out songs by the same artist and plays what you heard in the last two days last')
+        + sw('ui.radio', 'Keep the music going', 'When a playlist or album ends, add similar songs to the queue (like Spotify’s autoplay)'))
       + (IS_APP ? grp('Desktop lyrics', sw('ui.deskLyrics', 'Show lyrics on the desktop', 'A see-through, always-on-top strip with the current line of synced lyrics. Also in the lyrics panel and the tray menu')
         + sw('ui.dlLocked', 'Lock in place', 'Clicks go straight through to what’s underneath. Turn off to move or resize it')
         + seg('ui.dlSize', 'Text size', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Huge']])
@@ -2512,7 +2833,9 @@ function settingsHTML() {
       + grp('Troubleshooting', `<div class="set-row"><div class="lbl">Restart audio engine<small>Try this if playback stops responding</small></div><button class="btn ctl" id="engRestart">Restart</button></div>
         <div class="set-row"><div class="lbl">Re-link audio engine<small>Signs the engine in again through your browser. Make sure the browser is logged into your own Spotify account.</small></div><button class="btn ctl" id="engRelink">Re-link</button></div>
         <div class="set-row"><div class="lbl">Copy diagnostics<small>Version, account type, devices and recent engine log (no passwords or tokens)</small></div><button class="btn ctl" id="engDiag">Copy</button></div>`),
-    connect: grp('Last.fm', `<div id="lfmBox"></div>`)
+    connect: grp('Phone remote', sw('ui.remote', 'Control Amplite from your phone', 'Play/pause, skip, seek, volume and like from your phone’s browser, on the same Wi-Fi. No app needed')
+        + `<div id="remoteBox"></div>`)
+      + grp('Last.fm', `<div id="lfmBox"></div>`)
       + grp('Discord', sw('ui.discord', 'Show what you’re listening to', 'Your Discord profile shows “Listening to …” with the song, artist and cover while music plays')
         + `<div class="set-row"><div class="lbl">Discord application ID<small>Discord needs an app to show the status under. Create one named <b>Amplite</b> at <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">discord.com/developers/applications</a> → <b>New Application</b>, then copy its <b>Application ID</b> here.</small></div>
           <div class="ctl"><input class="set-text" id="discordId" placeholder="Application ID" spellcheck="false" autocomplete="off" maxlength="22"></div></div>
@@ -2556,6 +2879,34 @@ function previewAmp(on) {
     S.ampPreview = false;
     if (!ampOpen()) $('#ampHost').prepend(ampEl);
   }
+}
+
+/* ---- phone remote ---- */
+let qrLoad = null;
+function loadQr() { return qrLoad ??= new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'vendor/qrcode.js'; sc.onload = () => res(window.qrcode); sc.onerror = rej; document.head.append(sc); }); }
+async function applyRemote() {
+  if (!IS_APP) return null;
+  const info = await window.amplite.remote(CFG.ui.remote ? 'on' : 'off').catch(() => null);
+  if (info?.error) toast(info.error);
+  return info;
+}
+async function renderRemote(info) {
+  renderLastfm();
+  const box = $('#remoteBox'); if (!box) return;
+  if (!info || typeof info !== 'object' || !('url' in info)) info = await window.amplite.remote('info');
+  if (!CFG.ui.remote || !info.on) { box.innerHTML = info?.error ? `<p class="set-help bad">${esc(info.error)}</p>` : ''; return; }
+  if (!info.url) { box.innerHTML = '<p class="set-help">Your PC doesn’t seem to be on a network right now.</p>'; return; }
+  box.innerHTML = `<div class="remote-row"><canvas id="remoteQr" width="180" height="180"></canvas>
+    <div class="remote-help"><p><b>Scan this with your phone’s camera</b> and open the link. Your phone has to be on the same Wi-Fi as this PC. Tip: add it to your home screen.</p>
+    <p class="muted">If Windows asks whether Amplite may use your network, choose <b>Private networks</b>.</p>
+    <code id="remoteUrl">${esc(info.url)}</code>
+    <div class="remote-btns"><button class="btn ctl" id="remoteCopy">Copy link</button><button class="btn ctl" id="remoteReset" title="Makes a new link; old ones stop working">New link</button></div></div></div>`;
+  try {
+    const qr = (await loadQr())(0, 'M'); qr.addData(info.url); qr.make();
+    const cv = $('#remoteQr'), x = cv.getContext('2d'), n = qr.getModuleCount(), q = 2, cell = Math.floor(cv.width / (n + q * 2)), off = Math.floor((cv.width - cell * n) / 2);
+    x.fillStyle = '#fff'; x.fillRect(0, 0, cv.width, cv.height); x.fillStyle = '#000';
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) x.fillRect(off + c * cell, off + r * cell, cell, cell);
+  } catch {}
 }
 
 /* ---- Connections: Discord + Last.fm ---- */
@@ -2604,7 +2955,7 @@ function showTab(tab) {
   $$('.set-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === tab));
   previewAmp(tab === 'amp');
   if (tab === 'audio') renderEngine();
-  if (tab === 'connect') { renderLastfm(); window.amplite.discordStatus().then(renderDiscord); }
+  if (tab === 'connect') { renderRemote(); window.amplite.discordStatus().then(renderDiscord); }
 }
 
 function openSettings(tab = 'general') {
@@ -2651,6 +3002,8 @@ function bindSettings(root) {
     if (e.target.closest('#cidChange')) { store.set('openSetup', true); logout(); return; }
     if (e.target.closest('#engDiag')) { copyDiagnostics(); return; }
     if (e.target.closest('#lfmConnect')) { lastfmConnect(); return; }
+    if (e.target.closest('#remoteReset')) { window.amplite.remote('reset').then(renderRemote); return; }
+    if (e.target.closest('#remoteCopy')) { navigator.clipboard.writeText($('#remoteUrl')?.textContent || '').then(() => toast('Link copied')); return; }
     if (e.target.closest('#lfmDisconnect')) { window.amplite.lastfm('disconnect').then(r => renderLastfm(r.state)); return; }
     if (e.target.closest('#lfmEdit')) { renderLastfm(null, true); return; }
     if (e.target.closest('#engRetry')) { store.del(refusedKey()); store.del(webKey()); S.lastMode = playMode(); window.amplite.engineRestart(); renderEngine(); updatePlayerUI(); toast('Trying the built-in engine again…'); }
@@ -2788,6 +3141,9 @@ async function boot() {
       // From the tray, media keys and the Stream Deck plugin: "vol:+5" = volume +5 %, "seek:-10000" = back 10 s.
       const q = /^eq:([a-z]+)$/.exec(cmd);
       if (q) { eqCommand(q[1]); return; }
+      const abs = /^(vol|seek):=(\d+)$/.exec(cmd);
+      if (abs && abs[1] === 'vol') { setVolume(Math.min(100, +abs[2]) / 100); syncVolume(); return; }
+      if (abs && abs[1] === 'seek') { if (S.now?.duration) seek(Math.min(S.now.duration - 1000, +abs[2])); return; }
       const m = /^(vol|seek):([+-]\d+)$/.exec(cmd);
       if (m && m[1] === 'vol') { setVolume(S.volume + +m[2] / 100); syncVolume(); return; }
       if (m && m[1] === 'seek') { if (S.now?.duration) seek(Math.max(0, Math.min(S.now.duration - 1000, pos() + +m[2]))); return; }
