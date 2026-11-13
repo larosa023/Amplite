@@ -395,7 +395,11 @@ async function poll() {
     if ((S.actSeq || 0) !== seq) return; // stale: the user did something while this was in flight
     if (mine < (S.pollApplied || 0)) return; // an older check finished after a newer one
     S.pollApplied = mine;
-    if (!d || !d.item) { if (S.now?.source === 'remote') { S.now = null; updatePlayerUI(); } return; }
+    if (!d || !d.item) {
+      if (S.now?.source === 'remote') { S.now = null; updatePlayerUI(); }
+      if (dropped()) recoverPlayback();
+      return;
+    }
     if (S.deviceId && d.device?.id === S.deviceId) return; // the SDK keeps us in sync
     const t = d.item;
     S.now = {
@@ -409,11 +413,34 @@ async function poll() {
       for (const k of ['paused', 'shuffle', 'repeat']) if (k in S.opt) S.now[k] = S.opt[k];
       if ('position' in S.opt && S.opt.uri === t.uri) S.now.position = S.opt.position + (performance.now() - S.opt.ts);
     }
+    // Remember what the engine was playing, so playback can pick up again if the engine drops.
+    if (useEngine() && d.device?.name === S.engine?.name) S.lastGood = { uri: t.uri, context: S.now.context, position: d.progress_ms, duration: t.duration_ms, playing: d.is_playing, at: Date.now() };
+    else S.lastGood = null;
     // Volume changed on another device / in the Spotify app.
     const vp = d.device?.volume_percent;
     if (vp != null && Date.now() - (S.volAt || 0) > 2000 && Math.abs(vp / 100 - S.volume) > 0.01) { S.volume = vp / 100; syncVolume(); }
     updatePlayerUI();
   } catch { S.pollFails = (S.pollFails || 0) + 1; }
+}
+// The engine was playing a moment ago and now Spotify says nothing is playing: its connection to
+// Spotify dropped or it restarted. Start the same song again at the same spot instead of going silent.
+const dropped = () => useEngine() && S.lastGood?.playing && Date.now() - S.lastGood.at < 180000
+  && S.lastGood.position + (Date.now() - S.lastGood.at) < (S.lastGood.duration || 0) - 5000 // not just the end of the last song && !S.recovering && Date.now() - (S.recoveredAt || 0) > 45000;
+async function recoverPlayback() {
+  const g = S.lastGood; S.recovering = true;
+  try {
+    if (S.engine?.state !== 'ready') { const t0 = Date.now(); while (S.engine?.state !== 'ready' && Date.now() - t0 < 20000) await sleep(500); }
+    S.engineId = null;
+    const id = await findEngine(6);
+    if (!id || S.lastGood !== g) return; // something else started playing meanwhile
+    const position_ms = Math.max(0, Math.min(g.position + (Date.now() - g.at), (g.duration || 0) - 3000));
+    const ctxOk = g.context && /^spotify:(playlist|album):|:collection$/.test(g.context);
+    const bodies = [ctxOk && { context_uri: g.context, offset: { uri: g.uri }, position_ms }, { uris: [g.uri], position_ms }].filter(Boolean);
+    for (const body of bodies) {
+      try { await api('/me/player/play', { method: 'PUT', query: { device_id: id }, body }); S.recoveredAt = Date.now(); window.amplite.engineNote?.('recovered playback'); toast('Playback dropped for a moment, so Amplite picked up where you left off.'); pollSoon(900); return; }
+      catch {}
+    }
+  } finally { S.recovering = false; }
 }
 const pollSoon = (ms = 700) => setTimeout(poll, ms);
 const pollBurst = () => { pollSoon(350); pollSoon(1100); pollSoon(2200); };
@@ -657,6 +684,7 @@ async function resume() {
 async function pause() {
   if (!S.now) return;
   if (isLocal()) return S.player.pause();
+  if (S.lastGood) S.lastGood.playing = false;
   acted({ paused: true }); S.now.position = pos(); S.now.paused = true; updatePlayerUI();
   try { await api('/me/player/pause', { method: 'PUT' }); pollSoon(900); } catch (e) { S.opt = null; fail(e); pollSoon(200); }
 }
@@ -1113,9 +1141,9 @@ async function viewHome(el, _, alive) {
     if (!alive()) return;
     const seen = new Set(), albums = [];
     for (const it of d?.items || []) { const a = it.track?.album; if (a && !seen.has(a.id)) { seen.add(a.id); albums.push(a); } }
-    $('#hRecent').innerHTML = albums.slice(0, 12).map(a => card({ kind: 'album', id: a.id, uri: a.uri, title: a.name, sub: (a.artists || []).map(x => x.name).join(', '), image: img(a.images) })).join('')
-      || '<p class="muted">Nothing yet — play something!</p>';
-  }).catch(() => { if (alive()) $('#hRecent').innerHTML = '<p class="muted">Couldn’t load recent plays.</p>'; });
+    if (albums.length) $('#hRecent').innerHTML = albums.slice(0, 12).map(a => card({ kind: 'album', id: a.id, uri: a.uri, title: a.name, sub: (a.artists || []).map(x => x.name).join(', '), image: img(a.images) })).join('');
+    else recentFromHistory(alive);
+  }).catch(() => { if (alive()) recentFromHistory(alive, true); });
 
   api('/me/top/tracks', { query: { limit: 10, time_range: 'short_term' } }).then(d => {
     if (!alive()) return;
@@ -1127,6 +1155,29 @@ async function viewHome(el, _, alive) {
 
 // Home sections from your own history: top artists this week, and songs you used to love.
 const AIMG = { m: null };
+// Spotify's "recently played" can come back empty (it doesn't always count plays from Amplite's engine),
+// so "Jump back in" falls back to the albums in Amplite's own listening history.
+async function recentFromHistory(alive, failed = false) {
+  const box = () => alive() && $('#hRecent');
+  const seen = new Set(), albums = [];
+  for (const h of (await histItems().catch(() => [])).slice().reverse()) {
+    if (h.albumId && !seen.has(h.albumId)) { seen.add(h.albumId); albums.push(h); }
+    if (albums.length >= 12) break;
+  }
+  if (!box()) return;
+  if (!albums.length) { box().innerHTML = `<p class="muted">${failed ? 'Couldn’t load recent plays.' : 'Nothing yet — play something!'}</p>`; return; }
+  const cover = store.get('albimg', {}) || {};
+  box().innerHTML = albums.map(h => card({ kind: 'album', id: h.albumId, uri: 'spotify:album:' + h.albumId, title: h.album || 'Album', sub: h.artist, image: cover[h.albumId] })).join('');
+  for (const h of albums) {
+    if (cover[h.albumId] || !alive()) continue;
+    try {
+      const a = await api(`/albums/${h.albumId}`, { bg: true });
+      cover[h.albumId] = img(a?.images) || ''; store.set('albimg', cover);
+      const ph = box()?.querySelector(`.card[data-open="album:${CSS.escape(h.albumId)}"] .art .ph`);
+      if (ph && cover[h.albumId]) ph.outerHTML = `<img src="${esc(cover[h.albumId])}" alt="">`;
+    } catch { break; }
+  }
+}
 async function artistImage(id) {
   const m = (AIMG.m ??= store.get('artimg', {}) || {});
   if (m[id] && Date.now() - m[id].at < 14 * 864e5) return m[id].img;

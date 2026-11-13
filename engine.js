@@ -125,6 +125,7 @@ class Engine {
         this.format = line.match(/Amplite format: (\w+)/)[1]; this.junk = 0;
         this.send(this.status());
       }
+      else if (/connection (to (the )?server )?(was )?(closed|lost|reset)|session (is )?(invalid|lost|closed)|reconnect/i.test(line)) { this.drops = (this.drops || 0) + 1; this.log('!!! Amplite: the engine lost its connection to Spotify (' + this.drops + ' this run)'); }
       else if (/Loading <.*> with Spotify URI/.test(line)) this.curKeyFailed = false;
       else if (/<.*> \(\d+ ms\) loaded/.test(line)) { if (!this.curKeyFailed) { this.okTracks++; if (this.okTracks === 1) this.send(this.status()); } }
       else if (/symphonia_bundle_mp3.*(skipping junk|invalid mpeg)/i.test(line)) {
