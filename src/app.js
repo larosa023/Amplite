@@ -108,7 +108,7 @@ const ICONS = {
   queue: '<path d="M3 6h13M3 12h13M3 18h9M17 15v6l5-3z"/>',
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', library: '<path d="M4 4v16M9 4v16"/><path d="m14 4.5 5 15"/>', sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>', phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>', tools: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>', share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>', library: '<path d="M4 4v16M9 4v16"/><path d="m14 4.5 5 15"/>', sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>', phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>', tools: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>', share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7"/>', listadd: '<path d="M3 6h12M3 12h12M3 18h7M18 13v8M14 17h8"/>',
 };
 const svg = n => {
@@ -787,6 +787,7 @@ function updatePlayerUI() {
     syncLyricsForTrack();
     setTimeout(radioCheck, 2500);
     if (D.tab === 'queue') setTimeout(renderQueue, 400);
+    if (D.tab === 'info') setTimeout(renderInfo, 300);
     if (CFG.amp.plOpen) setTimeout(renderAmpPl, PLW.tab === 'queue' ? 500 : 0);
   }
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
@@ -916,10 +917,12 @@ async function navigate(name, arg = '', push = true) {
   const el = $('#view'), tok = ++navToken, alive = () => tok === navToken;
   if (push) el.scrollTop = 0;
   S.lists = []; S.hero = null; S.pl = null; closeAddSongs(); SEL.li = null; SEL.idx.clear(); SEL.anchor = null;
-  el.innerHTML = '<div class="loading"><span></span><span></span><span></span></div>';
+  // Pages that load quickly (most, thanks to the cache) never flash a spinner; new pages fade in.
+  const spin = setTimeout(() => { if (alive()) el.innerHTML = '<div class="loading"><span></span><span></span><span></span></div>'; }, 120);
   try { await VIEWS[name](el, arg, alive); }
   catch (e) { if (alive()) el.innerHTML = `<div class="empty"><h2>Couldn't load that</h2><p>${esc(e.message)}</p></div>`; }
-  if (alive()) markPlaying();
+  clearTimeout(spin);
+  if (alive()) { markPlaying(); el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter'); }
 }
 function goBack() { if (!S.back.length) return; S.fwd.push(S.cur); const v = S.back.pop(); navigate(v.name, v.arg, false); }
 function goFwd() { if (!S.fwd.length) return; S.back.push(S.cur); const v = S.fwd.pop(); navigate(v.name, v.arg, false); }
@@ -1101,7 +1104,10 @@ async function viewHome(el, _, alive) {
     <div class="quick">${tiles.join('')}</div>
     <section><h2>Jump back in</h2><div class="grid" id="hRecent">${'<div class="skel"></div>'.repeat(6)}</div></section>
     <section><h2>On repeat lately</h2><div id="hTop"><p class="muted">Loading…</p></div></section>
+    <section id="hArtists" hidden></section>
+    <section id="hRedis" hidden></section>
   </div></div>`;
+  homeFromHistory(alive);
 
   api('/me/player/recently-played', { query: { limit: 50 } }).then(d => {
     if (!alive()) return;
@@ -1117,6 +1123,48 @@ async function viewHome(el, _, alive) {
     $('#hTop').innerHTML = ts.length ? trackTable(ts) : '<p class="muted">Listen a bit more and your top tracks will show up here.</p>';
     markPlaying();
   }).catch(() => { if (alive()) $('#hTop').innerHTML = '<p class="muted">Couldn’t load top tracks.</p>'; });
+}
+
+// Home sections from your own history: top artists this week, and songs you used to love.
+const AIMG = { m: null };
+async function artistImage(id) {
+  const m = (AIMG.m ??= store.get('artimg', {}) || {});
+  if (m[id] && Date.now() - m[id].at < 14 * 864e5) return m[id].img;
+  try { const a = await api(`/artists/${id}`, { bg: true }); m[id] = { img: img(a.images, 300) || '', at: Date.now() }; }
+  catch { return ''; }
+  const k = Object.keys(m); if (k.length > 600) k.slice(0, 150).forEach(x => delete m[x]);
+  store.set('artimg', m); return m[id].img;
+}
+async function homeFromHistory(alive) {
+  const h = await histItems(); if (!alive() || !h.length) return;
+  const now = Date.now() / 1000;
+  // top artists, last 7 days
+  const art = new Map();
+  for (const x of h) if (x.ts > now - 7 * 86400) (x.artists?.length ? x.artists : [x.artist]).forEach((a, i) => {
+    if (!a) return; const e = art.get(a) || { name: a, id: '', ms: 0, plays: 0 }; e.ms += x.ms || 200000; e.plays++; if (!e.id && x.artistIds?.[i]) e.id = x.artistIds[i]; art.set(a, e);
+  });
+  const top = [...art.values()].sort((a, b) => b.ms - a.ms).slice(0, 6).filter(a => a.id);
+  if (top.length >= 3) {
+    const box = $('#hArtists'); box.hidden = false;
+    box.innerHTML = `<div class="sec-head"><h2>Your top artists this week</h2><a class="link-btn" data-open="stats:">See your stats</a></div>
+      <div class="grid">${top.map(a => card({ kind: 'artist', id: a.id, uri: 'spotify:artist:' + a.id, title: a.name, sub: `${longDur(a.ms)} · ${a.plays} play${a.plays === 1 ? '' : 's'}`, image: '', round: true })).join('')}</div>`;
+    for (const a of top) artistImage(a.id).then(u => {
+      if (!u || !alive()) return;
+      const c = box.querySelector(`.card[data-open="artist:${CSS.escape(a.id)}"] .art .ph`);
+      if (c) c.outerHTML = `<img src="${esc(u)}" alt="" loading="lazy" decoding="async">`;
+    });
+  }
+  // rediscover: played 3+ times, but not in the last 45 days
+  const songs = new Map();
+  for (const x of h) { if (!x.uri || /^spotify:local/.test(x.uri)) continue; const e = songs.get(x.uri) || { x, n: 0, last: 0 }; e.n++; e.last = Math.max(e.last, x.ts); if (x.image) e.x = x; songs.set(x.uri, e); }
+  const old = [...songs.values()].filter(e => e.n >= 3 && e.last < now - 45 * 86400).sort((a, b) => b.n - a.n).slice(0, 8);
+  if (old.length >= 3) {
+    const box = $('#hRedis'); box.hidden = false;
+    const tracks = old.map(e => ({ uri: e.x.uri, id: e.x.uri.split(':')[2], name: e.x.title, artists: (e.x.artists?.length ? e.x.artists : [e.x.artist]).map((n, i) => ({ name: n, id: e.x.artistIds?.[i] || undefined })),
+      album: { id: e.x.albumId || undefined, name: e.x.album || '', image: e.x.image || '' }, duration: e.x.duration || 0, playable: true }));
+    box.innerHTML = `<div class="sec-head"><h2>Rediscover</h2><span class="muted small-note">Songs you played a lot but haven’t in a while</span></div>${trackTable(tracks)}`;
+    markPlaying();
+  }
 }
 
 async function viewSearch(el, _, alive) {
@@ -1177,15 +1225,20 @@ async function viewPlaylist(el, id, alive) {
   el.innerHTML = hero({
     image: img(pl.images), kind: pl.public === false ? 'Private playlist' : 'Playlist', title: pl.name, tools: tracks.length > 0,
     pin: { type: 'playlist', id: pl.id, uri: pl.uri, name: pl.name, image: img(pl.images, 64) },
-    desc: stripHtml(pl.description), meta: `${esc(pl.owner?.display_name || '')} · <span id="plCount">${total}</span> songs`,
+    desc: stripHtml(pl.description), meta: `${esc(pl.owner?.display_name || '')} · <span id="plCount">${total}</span> songs${tracks.length ? `, ${longDur(tracks.reduce((s, t) => s + t.duration, 0))}` : ''}${tracks.some(t => t.added) ? ` · updated ${ago(Math.max(...tracks.filter(t => t.added).map(t => Date.parse(t.added))))}` : ''}`,
     extra: editable ? `<button class="pin-btn" data-add-songs title="Add songs to this playlist">${svg('plus')}<span>Add songs</span></button>` : '',
     extra2: (canEdit(pl) && pl.owner?.id === S.me?.id ? `<button class="pin-btn icon-only" data-edit-pl title="Rename, change description or delete">${svg('edit')}</button>` : '')
       + (tracks.length ? `<button class="pin-btn icon-only" data-pl-tools title="Playlist tools">${svg('tools')}</button>` : ''),
-  }) + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri, removable: editable })
+  }) + (tracks.length > 4 ? `<div class="pad pl-summary" id="plSummary">${plMostly(tracks)}</div>` : '') + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri, removable: editable })
     : editable ? `<div class="empty small"><p>This playlist is empty.</p><button class="pill-btn" data-add-songs>${svg('plus')} Add songs</button></div>` : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`
     + (tracks.length ? `<section class="recs pad" id="recs" data-pl="${esc(pl.id)}"></section>` : '');
   initListTools();
   if (tracks.length) initRecs(pl.id);
+  if (tracks.length > 4) histItems().then(h => {
+    const box = $('#plSummary'); if (!box || !alive() || !h.length) return;
+    const uris = new Set(tracks.map(t => t.uri)), mine = h.filter(x => uris.has(x.uri));
+    if (mine.length) box.insertAdjacentHTML('beforeend', `<span class="pl-you">${new Set(mine.map(x => x.uri)).size} of these songs played ${mine.length.toLocaleString()} time${mine.length === 1 ? '' : 's'} · ${longDur(mine.reduce((t, x) => t + (x.ms || 200000), 0))}</span>`);
+  });
 }
 
 async function viewAlbum(el, id, alive) {
@@ -1195,12 +1248,56 @@ async function viewAlbum(el, id, alive) {
   if (!alive()) return;
   S.hero = { context: al.uri };
   const tracks = items.map(t => norm({ ...t, album: { id: al.id, name: al.name, images: al.images } })).filter(Boolean);
+  const total = tracks.reduce((s, t) => s + t.duration, 0);
+  const type = al.album_type === 'single' ? (tracks.length > 2 ? 'EP' : 'Single') : al.album_type === 'compilation' ? 'Compilation' : 'Album';
+  const discs = new Set(items.map(t => t.disc_number || 1)).size;
   el.innerHTML = hero({
-    image: img(al.images), kind: al.album_type === 'single' ? 'Single' : 'Album', title: al.name,
+    image: img(al.images), kind: type, title: al.name,
     pin: { type: 'album', id: al.id, uri: al.uri, name: al.name, image: img(al.images, 64) },
-    meta: `${artistLinks(al.artists)} · ${(al.release_date || '').slice(0, 4)} · ${tracks.length} songs`,
-  }) + `<div class="pad">${trackTable(tracks, { context: al.uri, showAlbum: false, showArt: false })}</div>`;
+    meta: `${artistLinks(al.artists)} · <span title="${esc(relDate(al.release_date))}">${esc((al.release_date || '').slice(0, 4))}</span> · ${tracks.length} song${tracks.length === 1 ? '' : 's'}, ${longDur(total)}${discs > 1 ? ` · ${discs} discs` : ''}`,
+  }) + `<div class="pad album-body"><div class="album-main">${trackTable(tracks, { context: al.uri, showAlbum: false, showArt: false })}
+      <div class="album-foot"><p>${al.release_date_precision === 'day' ? 'Released ' + esc(relDate(al.release_date)) : esc((al.release_date || '').slice(0, 4))}</p>
+        ${al.label ? `<p>${esc(al.label)}</p>` : ''}${(al.copyrights || []).slice(0, 2).map(c => `<p>${c.type === 'P' ? '℗' : '©'} ${esc(String(c.text || '').replace(/^\s*(\(?[cCpP]\)|[©℗])\s*/, ''))}</p>`).join('')}</div></div>
+    <aside class="album-side" id="albumYou"></aside></div>
+    <div class="pad"><section id="albumMore"></section></div>`;
+  // Your plays of this album
+  histItems().then(h => {
+    const box = $('#albumYou'); if (!box || !alive()) return;
+    const uris = new Set(tracks.map(t => t.uri)), mine = h.filter(x => x.albumId === al.id || uris.has(x.uri));
+    if (!mine.length) { box.remove(); return; }
+    const per = new Map(); mine.forEach(x => per.set(x.title, (per.get(x.title) || 0) + 1));
+    const fav = [...per.entries()].sort((a, b) => b[1] - a[1])[0];
+    box.innerHTML = `<section class="side-card"><h3>You &amp; this ${type.toLowerCase()}</h3>
+      <div class="you-stats"><div><b>${mine.length}</b><span>plays</span></div><div><b>${longDur(mine.reduce((t, x) => t + (x.ms || 200000), 0)).replace(' min', '<small> min</small>')}</b><span>listened</span></div><div><b>${per.size}/${tracks.length}</b><span>songs heard</span></div></div>
+      <p class="muted small-note">Favourite: ${esc(fav[0])} (${fav[1]}×) · first played ${esc(ago(Math.min(...mine.map(x => x.ts)) * 1000))}</p></section>`;
+  });
+  // More by the main artist
+  const main = al.artists?.[0];
+  if (main?.id) api(`/artists/${main.id}/albums`, { query: { include_groups: 'album,single', limit: 10 } }).then(d => {
+    const more = (d?.items || []).filter(x => x.id !== al.id && x.name !== al.name).slice(0, 8);
+    const box = $('#albumMore'); if (!box || !alive() || !more.length) return;
+    box.innerHTML = `<div class="sec-head"><h2>More by ${esc(main.name)}</h2><a class="link-btn" data-open="artist:${esc(main.id)}">See discography</a></div>
+      <div class="grid">${more.map(a => card({ kind: 'album', id: a.id, uri: a.uri, title: a.name, image: img(a.images), sub: `${(a.release_date || '').slice(0, 4)} · ${a.album_type === 'single' ? (a.total_tracks > 2 ? 'EP' : 'Single') : 'Album'}` })).join('')}</div>`;
+  }).catch(() => {});
 }
+
+/* ---------------- shared detail helpers ---------------- */
+// Amplite's listening history, cached for a minute (it's read by several pages).
+const HC = { at: 0, items: [], p: null };
+async function histItems() {
+  if (!IS_APP) return [];
+  if (Date.now() - HC.at < 60000) return HC.items;
+  return HC.p ??= window.amplite.history('read').then(r => { HC.items = r.items || []; HC.at = Date.now(); HC.p = null; return HC.items; }).catch(() => { HC.p = null; return HC.items; });
+}
+const longDur = ms => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`; };
+function ago(t) {
+  if (!t) return '';
+  const d = Math.floor((Date.now() - t) / 864e5);
+  if (d <= 0) return 'today'; if (d === 1) return 'yesterday'; if (d < 7) return `${d} days ago`;
+  if (d < 35) { const w = Math.round(d / 7); return `${w} week${w === 1 ? '' : 's'} ago`; }
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+const dayStr = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
 /* ---------------- artist page ---------------- */
 // Spotify no longer gives apps an artist's top tracks, related artists or follower counts, so the
@@ -1481,12 +1578,75 @@ function openDrawer(tab) {
   D.tab = tab;
   $('#drawer').classList.remove('hidden');
   $$('.drawer-tabs [data-dtab]').forEach(b => b.classList.toggle('on', b.dataset.dtab === tab));
-  $('#queueBtn').classList.toggle('on', tab === 'queue'); $('#lyricsBtn').classList.toggle('on', tab === 'lyrics');
-  tab === 'queue' ? renderQueue() : renderLyrics();
+  $('#queueBtn').classList.toggle('on', tab === 'queue'); $('#lyricsBtn').classList.toggle('on', tab === 'lyrics'); $('#infoBtn')?.classList.toggle('on', tab === 'info');
+  $('#deskLyricsBtn')?.classList.toggle('hidden', tab !== 'lyrics');
+  tab === 'queue' ? renderQueue() : tab === 'info' ? renderInfo() : renderLyrics();
 }
 function closeDrawer() {
   D.tab = null; $('#drawer').classList.add('hidden');
-  $('#queueBtn').classList.remove('on'); $('#lyricsBtn').classList.remove('on');
+  $('#queueBtn').classList.remove('on'); $('#lyricsBtn').classList.remove('on'); $('#infoBtn')?.classList.remove('on');
+}
+// ---- Info: everything about the song that's playing ----
+const LF = new Map(); // artist name → Last.fm info (this session)
+async function lastfmArtist(name) {
+  if (!IS_APP || !name) return null;
+  if (LF.has(name)) return LF.get(name);
+  const p = window.amplite.lastfm('artist', { name }).then(r => r?.ok ? r.artist : null).catch(() => null);
+  LF.set(name, p); if (LF.size > 40) LF.delete(LF.keys().next().value);
+  return p;
+}
+async function renderInfo() {
+  const body = $('#drawerBody'), n = S.now;
+  if (D.tab !== 'info') return;
+  if (!n) { body.innerHTML = `<div class="empty small">${svg('music')}<p>Nothing playing.</p></div>`; return; }
+  const id = n.uri; D.infoFor = id;
+  const a0 = n.artists?.[0] || {};
+  body.innerHTML = `<div class="info">
+    <div class="info-cover">${n.album?.image ? `<img src="${esc(n.album.image.replace(/(ab67616d0000)(4851|1e02)/, '$1b273'))}" alt="">` : `<div class="ph">${svg('music')}</div>`}</div>
+    <h3 class="info-title">${esc(n.name)}</h3>
+    <div class="info-artists">${artistLinks(n.artists)}</div>
+    <dl class="info-facts" id="infoFacts">
+      ${n.album?.name ? `<div><dt>Album</dt><dd>${n.album.id ? `<a data-open="album:${esc(n.album.id)}">${esc(n.album.name)}</a>` : esc(n.album.name)}</dd></div>` : ''}
+      <div><dt>Length</dt><dd>${fmt(n.duration)}</dd></div>
+    </dl>
+    <section class="info-sec" id="infoYou"><h4>Your listening</h4><div class="loading small"><span></span><span></span><span></span></div></section>
+    <section class="info-sec" id="infoArtist"></section>
+    <section class="info-sec" id="infoNext"></section>
+  </div>`;
+  const still = () => D.tab === 'info' && D.infoFor === id;
+  // album facts (release date, track number, label) — cached for a couple of minutes
+  if (n.album?.id) api(`/albums/${n.album.id}`, { bg: true }).then(al => {
+    if (!still()) return;
+    const tr = al.tracks?.items?.find(t => t.id === n.id), f = $('#infoFacts'); if (!f) return;
+    const typ = al.album_type === 'single' ? ((al.total_tracks || 0) > 2 ? 'EP' : 'Single') : al.album_type === 'compilation' ? 'Compilation' : 'Album';
+    f.insertAdjacentHTML('beforeend', `${tr ? `<div><dt>Track</dt><dd>${tr.track_number} of ${al.total_tracks}${tr.explicit ? ' <span class="badge-e" title="Explicit">E</span>' : ''}</dd></div>` : ''}
+      <div><dt>Released</dt><dd>${esc(al.release_date_precision === 'day' ? relDate(al.release_date) : (al.release_date || '').slice(0, 4))} · ${typ}</dd></div>
+      ${al.label ? `<div><dt>Label</dt><dd>${esc(al.label)}</dd></div>` : ''}`);
+  }).catch(() => {});
+  // your history with this song + artist
+  histItems().then(h => {
+    const box = $('#infoYou'); if (!box || !still()) return;
+    const k = recKey(a0.name, n.name), song = h.filter(x => x.uri === n.uri || recKey((x.artists || [x.artist])[0], x.title) === k);
+    const artPlays = h.filter(x => (x.artists?.length ? x.artists : [x.artist]).some(a => recKey(a, '') === recKey(a0.name, ''))).length;
+    box.innerHTML = `<h4>Your listening</h4>${song.length ? `<div class="you-stats"><div><b>${song.length}</b><span>plays</span></div><div><b>${esc(ago(Math.min(...song.map(x => x.ts)) * 1000))}</b><span>first played</span></div><div><b>${artPlays}</b><span>${esc(a0.name || 'artist')} plays</span></div></div>`
+      : `<p class="muted small-note">First time you’re playing this in Amplite${artPlays ? ` — you’ve played ${esc(a0.name)} ${artPlays} time${artPlays === 1 ? '' : 's'}` : ''}.</p>`}`;
+  });
+  // the artist
+  (async () => {
+    const [ar, lf] = await Promise.all([a0.id ? api(`/artists/${a0.id}`, { bg: true }).catch(() => null) : null, lastfmArtist(a0.name)]);
+    const box = $('#infoArtist'); if (!box || !still() || (!ar && !lf)) return;
+    const bio = (lf?.bio || '').replace(/<a [^>]*>Read more on Last\.fm<\/a>\.?/i, '').replace(/<[^>]+>/g, '').replace(/User-contributed text is available.*$/s, '').trim().split(/\n\s*\n/)[0] || '';
+    box.innerHTML = `<h4>About the artist</h4><div class="info-artist" ${a0.id ? `data-open="artist:${esc(a0.id)}"` : ''}>
+        ${img(ar?.images, 160) ? `<img src="${esc(img(ar.images, 160))}" alt="">` : `<div class="ph">${svg('user')}</div>`}
+        <div><b>${esc(a0.name || '')}</b><small>${[lf?.listeners ? fmtNum(lf.listeners) + ' listeners' : '', (ar?.genres || lf?.tags || []).filter(t => !/^seen live$/i.test(t)).slice(0, 2).join(', ')].filter(Boolean).map(esc).join(' · ')}</small></div></div>
+      ${bio ? `<p class="info-bio">${esc(bio.length > 360 ? bio.slice(0, 360).replace(/\s\S*$/, '') + '…' : bio)}</p>` : ''}`;
+  })();
+  // up next
+  api('/me/player/queue', { bg: true }).then(q => {
+    const box = $('#infoNext'); if (!box || !still()) return;
+    const nx = (q?.queue || []).filter(t => t && t.uri !== n.uri).slice(0, 3);
+    if (nx.length) box.innerHTML = `<h4>Up next</h4>${nx.map(t => qRow(t, false)).join('')}`;
+  }).catch(() => {});
 }
 const qRow = (t, now) => `<div class="q-row ${now ? 'now' : ''}" ${t.album?.id ? `data-open="album:${esc(t.album.id)}"` : ''}>
   ${img(t.album?.images || t.images, 64) ? `<img src="${esc(img(t.album?.images || t.images, 64))}" alt="" loading="lazy" decoding="async">` : `<div class="ph">${svg('music')}</div>`}
@@ -1703,6 +1863,15 @@ function bindDrag() {
     const tracks = dragging; t.el.classList.remove('drop-on');
     addTracksTo(t.p, tracks);
   });
+}
+
+// "Mostly Deftones (12) · Linkin Park (8) …" under a playlist's header.
+function plMostly(tracks) {
+  const c = new Map();
+  tracks.forEach(t => { const a = t.artists[0]; if (!a?.name) return; const e = c.get(a.name) || { a, n: 0 }; e.n++; c.set(a.name, e); });
+  const top = [...c.values()].sort((x, y) => y.n - x.n).slice(0, 5).filter(e => e.n > 1);
+  if (!top.length) return '';
+  return `<span class="pl-mostly">Mostly ${top.map(e => `${e.a.id ? `<a data-open="artist:${esc(e.a.id)}">${esc(e.a.name)}</a>` : esc(e.a.name)} <em>${e.n}</em>`).join('<i>·</i>')}${c.size > top.length ? `<i>·</i><em>${c.size} artists in all</em>` : ''}</span>`;
 }
 
 // ---- playlist tools: duplicates, save order, add from another playlist, export ----
@@ -2409,6 +2578,7 @@ function toggleDeskLyrics() {
 function bindDrawer() {
   $('#queueBtn').onclick = () => openDrawer('queue');
   $('#lyricsBtn').onclick = () => openDrawer('lyrics');
+  if ($('#infoBtn')) $('#infoBtn').onclick = () => openDrawer('info');
   $('#drawer').addEventListener('click', e => {
     if (e.target.closest('[data-dclose]')) return closeDrawer();
     const tb = e.target.closest('[data-dtab]'); if (tb) { D.tab = null; return openDrawer(tb.dataset.dtab); }
@@ -2781,6 +2951,7 @@ function onKey(e) {
   else if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.altKey) toggleAmp();
   else if (e.key.toLowerCase() === 'q' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openDrawer('queue');
   else if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openDrawer('lyrics');
+  else if (e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openDrawer('info');
   else if (e.key === '/' && !S.ampWin) { e.preventDefault(); navigate('search'); }
 }
 
@@ -3345,6 +3516,14 @@ function switchClientId(id) {
   if (id) store.set('clientId', id); else store.del('clientId');
 }
 
+// Images fade in when they arrive instead of popping in (one listener for the whole app); broken ones stay hidden.
+// Images that finished loading before they were put on the page are shown straight away.
+document.addEventListener('load', e => { const t = e.target; if (t?.tagName === 'IMG') t.classList.add('in'); }, true);
+const imgSeen = new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) {
+  if (n.tagName === 'IMG') { if (n.complete && n.naturalWidth) n.classList.add('in'); }
+  else if (n.firstElementChild) for (const i of n.getElementsByTagName('img')) if (i.complete && i.naturalWidth) i.classList.add('in');
+} });
+for (const id of ['view', 'drawer']) { const r = document.getElementById(id); if (r) imgSeen.observe(r, { childList: true, subtree: true }); }
 async function boot() {
   if (IS_APP) {
     try { S.appVersion = (await window.amplite.info()).version; } catch {}

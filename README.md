@@ -15,6 +15,10 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Desktop lyrics**: a see-through, always-on-top strip with the current line of synced lyrics, with a karaoke fill and the next line underneath. Turn it on with **Desktop** in the lyrics panel, the tray menu, or Settings → General. Drag it where you want it, then **Lock** it so clicks pass through.
 - **AI playlists**: the ✨ next to *Your playlists*. Describe a playlist ("late-night drive, moody 2000s rock") and a model running on your own PC through [Ollama](https://ollama.com) picks the songs; Amplite finds them on Spotify so you can play them or save the playlist. Free and private. Needs Ollama with a chat model (e.g. `ollama pull llama3.1`).
 - **Artist pages**: a banner tinted from the artist's photo, listener and scrobble counts and your own scrobbles (Last.fm), genres, **Follow**, **Shuffle** and **Radio** (their songs mixed with similar artists), their latest release, popular songs (with *Show more*), a **You & them** card from your history (minutes, plays, rank among your artists, your most-played songs), a biography, a discography split into Albums / Singles & EPs / Compilations / Appears on, and **Fans also like**.
+- **Album pages**: type (album, EP, single), total length and discs, release date, label and credits, a **You & this album** card (plays, minutes, how many of its songs you've heard, your favourite) and **More by** the artist.
+- **Playlist details**: total length, when it was last updated, who's mostly on it ("Mostly Deftones 12 · Chevelle 8 …") and how often you've played its songs.
+- **About this song** (`I`, or the ⓘ next to lyrics): the cover in full size, album, track number, release date, label, explicit tag, your plays of the song and artist, a short artist bio and what's up next.
+- **Home** also shows your top artists this week and **Rediscover**: songs you played a lot but haven't heard in a while.
 - **Library**: your saved albums and the artists you follow, with filter and sort.
 - **Playlist tools** (the ⋯ button on your playlists): remove duplicates, save a sort order to the playlist itself, add songs from another playlist, and export to a spreadsheet (CSV). Changes can be undone.
 - **Smart shuffle**: the shuffle button on a playlist spreads out songs by the same artist and plays what you've heard in the last two days last (Settings → General → Playback).
@@ -31,13 +35,14 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Filter, sort and shuffle** Liked Songs and playlists.
 - **System tray** with play/pause/skip, **close to tray**, and **start with Windows** (window, tray or mini amp).
 - **Mini amp snaps** to screen edges and corners and remembers where you put it.
+- **Smooth and fast**: pages that are already cached open instantly with no loading spinner, new pages and images fade in, and Lite mode or Windows' *reduce animations* setting turns the motion off.
 - **Fast startup**: your profile, playlists and Home appear instantly from the last session and refresh in the background. Pages start loading when you hover over them.
 - **Collapsible sidebar** (button at the top of the sidebar, or `Ctrl+B`) and a **Lite mode** that turns off effects for lower CPU/GPU use.
 - **Auto-updates**: Amplite checks GitHub Releases, downloads new versions in the background, and shows a restart button in the title bar. You can also use **Check for updates** in the account menu.
 - **Media keys** (play/pause, next, previous) work even when Amplite isn't focused.
 - Home (recently played and your top tracks), search, Liked Songs, playlists, albums and artists.
 - Plays music itself at **320 kbps** through a built-in audio engine, or acts as a remote for Spotify on your other devices.
-- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings · `Ctrl+1–9` pinned items · `Q` queue · `L` lyrics.
+- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings · `Ctrl+1–9` pinned items · `Q` queue · `L` lyrics · `I` about this song.
 
 ## Install
 
