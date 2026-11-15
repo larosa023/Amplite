@@ -19,6 +19,8 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Playlist details**: total length, when it was last updated, who's mostly on it ("Mostly Deftones 12 · Chevelle 8 …") and how often you've played its songs.
 - **About this song** (`I`, or the ⓘ next to lyrics): the cover in full size, album, track number, release date, label, explicit tag, your plays of the song and artist, a short artist bio and what's up next.
 - **Home** also shows your top artists this week and **Rediscover**: songs you played a lot but haven't heard in a while.
+- **New releases** (sidebar): new albums, singles and EPs from the artists you follow and the ones you play most, grouped into this week / last week / earlier, with a **NEW** badge in the sidebar and a heads-up when something drops. Checked quietly in the background every few hours. **Play new songs** plays the last two weeks of releases.
+- **Full screen** (`F`, or the ⛶ button in the player bar): big album art over a blurred backdrop, large synced lyrics that glide along with the song (click a line to jump there), a clock and what's up next. The controls and mouse pointer hide when you're not moving the mouse. `Esc` to leave.
 - **Library**: your saved albums and the artists you follow, with filter and sort.
 - **Playlist tools** (the ⋯ button on your playlists): remove duplicates, save a sort order to the playlist itself, add songs from another playlist, and export to a spreadsheet (CSV). Changes can be undone.
 - **Smart shuffle**: the shuffle button on a playlist spreads out songs by the same artist and plays what you've heard in the last two days last (Settings → General → Playback).
@@ -42,7 +44,7 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Media keys** (play/pause, next, previous) work even when Amplite isn't focused.
 - Home (recently played and your top tracks), search, Liked Songs, playlists, albums and artists.
 - Plays music itself at **320 kbps** through a built-in audio engine, or acts as a remote for Spotify on your other devices.
-- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings · `Ctrl+1–9` pinned items · `Q` queue · `L` lyrics · `I` about this song.
+- Shortcuts: `Space` play/pause · `Ctrl+←/→` previous/next · `M` mini amp · `/` search · `Ctrl+B` sidebar · `Ctrl+,` settings · `Ctrl+1–9` pinned items · `Q` queue · `L` lyrics · `I` about this song · `F` full screen.
 
 ## Install
 

@@ -104,7 +104,7 @@ function saveBounds() {
   // Debounced: dragging fires dozens of move events; write once it settles.
   clearTimeout(boundsT);
   boundsT = setTimeout(() => {
-    if (!mainWin || mainWin.isDestroyed() || mainWin.isMinimized() || !mainWin.isVisible()) return;
+    if (!mainWin || mainWin.isDestroyed() || mainWin.isMinimized() || !mainWin.isVisible() || mainWin.isFullScreen()) return;
     fs.writeFile(boundsFile(), JSON.stringify({ ...mainWin.getNormalBounds(), maximized: mainWin.isMaximized() }), () => {});
   }, 500);
 }
@@ -135,6 +135,8 @@ function createMain() {
   mainWin.on('resize', saveBounds);
   mainWin.on('move', saveBounds);
   mainWin.on('closed', () => { mainWin = null; app.quit(); });
+  // Full-screen now playing: leaving full screen any other way (Windows, a shortcut) closes it too.
+  mainWin.on('leave-full-screen', () => mainWin?.webContents.send('media', 'fullscreen-off'));
   // Tell the page whether it's really on screen (hidden to tray, minimised, behind the mini amp).
   const vis = v => () => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('win-visible', v); };
   mainWin.on('hide', vis(false)); mainWin.on('minimize', vis(false));
@@ -281,6 +283,7 @@ ipcMain.on('desk-lyrics-config', (_e, c = {}) => {
   tray?.setContextMenu(trayMenu());
 });
 // The lock button on the lyrics strip itself.
+ipcMain.on('fullscreen', (_e, on) => { if (mainWin && !mainWin.isDestroyed() && mainWin.isFullScreen() !== !!on) mainWin.setFullScreen(!!on); });
 ipcMain.on('desk-lyrics-lock', () => mainWin?.webContents.send('media', 'desklyrics-lock'));
 
 /* ---------------- phone remote ---------------- */

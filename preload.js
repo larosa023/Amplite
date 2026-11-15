@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('amplite', {
   deskLyrics: p => ipcRenderer.send('desk-lyrics', p),
   deskLyricsConfig: c => ipcRenderer.send('desk-lyrics-config', c),
   deskLyricsLock: () => ipcRenderer.send('desk-lyrics-lock'),
+  fullscreen: on => ipcRenderer.send('fullscreen', !!on),
   onDeskLyrics: cb => ipcRenderer.on('dl', (_e, p) => cb(p)),
   onDeskLyricsStyle: cb => ipcRenderer.on('dl-style', (_e, s) => cb(s)),
   imageData: url => ipcRenderer.invoke('image-data', url),

@@ -96,6 +96,8 @@ const ICONS = {
   amp: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 14v-2M9 14v-4M12 14v-3M15 14v-5"/><circle cx="18.5" cy="12" r="1"/>',
   left: '<path d="m15 18-6-6 6-6"/>', right: '<path d="m9 18 6-6-6-6"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   popout: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
@@ -759,7 +761,7 @@ async function toggleLike() {
   } catch (e) { S.liked = was; renderLike(); toast(e.message); }
 }
 const renderLike = () => {
-  sendExtra();
+  sendExtra(); fsState();
   $('#likeBtn').classList.toggle('liked', S.liked);
   const al = $('[data-amp="like"]', ampEl);
   if (al) { al.classList.toggle('on', S.liked); al.textContent = S.liked ? '♥' : '♡'; al.title = S.liked ? 'Remove from Liked Songs' : 'Save to Liked Songs'; }
@@ -780,6 +782,7 @@ const artistLinks = arr => (arr || []).map(a => a.id ? `<a data-open="artist:${e
 
 function updatePlayerUI() {
   const n = S.now;
+  if (FS.open) { fsTrack(); fsState(); }
   if (CFG.ui.deskLyrics) deskLyricsTick();
   $('#npTitle').textContent = n?.name || 'Nothing playing';
   $('#npArtist').innerHTML = n ? artistLinks(n.artists) : (S.deviceId ? 'Ready — pick something to play' : '');
@@ -816,6 +819,7 @@ function updatePlayerUI() {
     setTimeout(radioCheck, 2500);
     if (D.tab === 'queue') setTimeout(renderQueue, 400);
     if (D.tab === 'info') setTimeout(renderInfo, 300);
+    if (FS.open) fsTrack();
     if (CFG.amp.plOpen) setTimeout(renderAmpPl, PLW.tab === 'queue' ? 500 : 0);
   }
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
@@ -850,6 +854,7 @@ function tickBar() {
   if (!TB.cur) { TB.cur = $('#tCur'); TB.dur = $('#tDur'); TB.seek = $('#seek'); }
   if (D.lines.length) tickLyrics();
   if (mainHidden()) return;
+  if (FS.open) fsTick();
   const n = S.now, d = n?.duration || 0, p = pos();
   if (!S.seeking) { setText(TB.cur, fmt(p)); setRange(TB.seek, d ? p / d : 0); }
   setText(TB.dur, fmt(d));
@@ -930,7 +935,7 @@ async function viewLibrary(el, _arg, alive) {
   $('#libGrid').addEventListener('click', e => { if (e.target.closest('[data-allow-login]')) login(); });
   el.querySelector('.lib-ctl').addEventListener('click', e => { const b = e.target.closest('[data-libtab]'); if (b && b.dataset.libtab !== tab) { store.set('libTab', b.dataset.libtab); navigate('library', '', false); } });
 }
-const VIEWS = { library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
+const VIEWS = { releases: viewReleases, library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
 let navToken = 0;
 
 async function navigate(name, arg = '', push = true) {
@@ -1349,6 +1354,152 @@ function ago(t) {
   return new Date(t).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
 }
 const dayStr = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+/* ---------------- new releases (Release Radar) ---------------- */
+// Checks the artists you follow (plus, optionally, the ones you play most) for new albums and
+// singles in the background: once a day per artist, one request at a time with gaps, so it never
+// trips Spotify's rate limit, and it picks up where it stopped if Amplite closes mid-check.
+const NR = { busy: false, done: 0, total: 0, t: null, keep: 56 }; // keep releases from the last 8 weeks
+const nrKey = () => 'radar:' + (S.me?.id || '');
+const nrGet = () => { const r = store.get(nrKey(), null) || {}; return { at: r.at || 0, items: r.items || [], seen: r.seen || [], scanned: r.scanned || {}, artists: r.artists || 0, first: r.first ?? true }; };
+const nrSave = r => store.set(nrKey(), r);
+const relTime = d => { const t = Date.parse(d + 'T12:00:00'); return isNaN(t) ? 0 : t; };
+const sinceStr = t => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : ago(t); };
+function nrUnseen(r = nrGet()) { const seen = new Set(r.seen), cut = Date.now() - 14 * 864e5; return r.items.filter(x => !seen.has(x.id) && relTime(x.date) >= cut).length; }
+function nrBadge() {
+  const b = $('#nrBadge'); if (!b) return;
+  const n = nrUnseen(); b.textContent = n > 99 ? '99+' : String(n); b.hidden = !n;
+}
+async function nrArtists(fresh = false) {
+  const out = new Map();
+  S.nrNoFollow = false;
+  try {
+    let query = { type: 'artist', limit: 50 };
+    for (let i = 0; i < 20; i++) {
+      const d = await api('/me/following', { query, bg: true, fresh }); const a = d?.artists; if (!a) break;
+      for (const x of a.items || []) out.set(x.id, x.name);
+      if (!a.next || !a.cursors?.after) break;
+      query = { type: 'artist', limit: 50, after: a.cursors.after };
+    }
+  } catch (e) {
+    if (e?.status === 429) throw e;
+    if (e?.status === 401 || e?.status === 403) S.nrNoFollow = !(store.get('token')?.scope || '').includes('user-follow-read');
+  }
+  if (CFG.ui.nrTop !== false) {
+    // The artists you've played most over the last 3 months count too (5+ plays), up to 40 of them.
+    const cut = Date.now() / 1000 - 90 * 86400, c = new Map();
+    for (const h of await histItems().catch(() => [])) if (h.ts >= cut && h.artistIds?.[0]) { const k = h.artistIds[0]; c.set(k, { n: (c.get(k)?.n || 0) + 1, name: h.artists?.[0] || h.artist }); }
+    [...c].filter(([, v]) => v.n >= 5).sort((a, b) => b[1].n - a[1].n).slice(0, 40).forEach(([id, v]) => { if (!out.has(id)) out.set(id, v.name); });
+  }
+  return out;
+}
+async function nrScan(force = false) {
+  if (NR.busy || !S.me || rateLimited()) return;
+  NR.busy = true; NR.done = NR.total = 0; nrProgress();
+  const r = nrGet(), before = new Set(r.items.map(x => x.id)), fresh = [];
+  const cut = Date.now() - NR.keep * 864e5;
+  try {
+    const artists = await nrArtists(force);
+    r.artists = artists.size;
+    const due = [...artists.keys()].filter(id => force || Date.now() - (r.scanned[id] || 0) > 20 * 3600e3);
+    NR.total = due.length; nrProgress();
+    for (const id of due) {
+      if (rateLimited()) break;
+      let d;
+      try { d = await api(`/artists/${id}/albums`, { bg: true, fresh: force, query: { include_groups: 'album,single', limit: 10 } }); }
+      catch (e) { if (e.status === 429) break; r.scanned[id] = Date.now(); NR.done++; continue; }
+      for (const a of d?.items || []) {
+        const t = relTime(a.release_date);
+        if (a.release_date_precision !== 'day' || t < cut || t > Date.now() + 864e5) continue;
+        const it = { id: a.id, uri: a.uri, name: a.name, type: a.album_type === 'single' && a.total_tracks > 3 ? 'ep' : a.album_type, tracks: a.total_tracks, date: a.release_date, image: img(a.images, 300), artists: (a.artists || []).map(x => ({ id: x.id, name: x.name })) };
+        // The same release often comes twice (clean / explicit, or listed under each artist).
+        if (r.items.some(x => x.id === it.id || (x.name.toLowerCase() === it.name.toLowerCase() && x.artists[0]?.id === it.artists[0]?.id))) continue;
+        r.items.push(it); if (!before.has(it.id)) fresh.push(it);
+      }
+      r.scanned[id] = Date.now(); NR.done++;
+      if (NR.done % 10 === 0) { nrSave(r); nrProgress(); if (S.cur?.name === 'releases') nrDraw(); }
+    }
+    r.items = r.items.filter(x => relTime(x.date) >= cut).sort((a, b) => relTime(b.date) - relTime(a.date) || a.name.localeCompare(b.name));
+    for (const k of Object.keys(r.scanned)) if (!artists.has(k)) delete r.scanned[k]; // unfollowed artists
+    // First full check: only this week's releases count as new, so you don't start with 40 badges.
+    if (r.first && NR.done === NR.total) { r.seen = [...new Set([...r.seen, ...r.items.filter(x => relTime(x.date) < Date.now() - 7 * 864e5).map(x => x.id)])]; r.first = false; }
+    r.seen = r.seen.filter(id => r.items.some(x => x.id === id));
+    r.at = Date.now(); nrSave(r);
+    const seen = new Set(r.seen), news = fresh.filter(x => !seen.has(x.id) && relTime(x.date) >= Date.now() - 14 * 864e5);
+    if (news.length && S.cur?.name !== 'releases') toast(news.length === 1 ? `New from ${news[0].artists[0]?.name}: ${news[0].name}` : `${news.length} new releases from artists you like`, { label: 'Show', run: () => navigate('releases') });
+  } catch {} finally {
+    NR.busy = false; nrProgress(); nrBadge();
+    if (S.cur?.name === 'releases') nrDraw();
+  }
+}
+// First check 45 s after startup, then every 6 hours.
+function nrSchedule() {
+  clearTimeout(NR.t);
+  const at = nrGet().at, wait = at ? Math.max(45e3, 6 * 3600e3 - (Date.now() - at)) : 45e3;
+  NR.t = setTimeout(async () => { await nrScan(); nrSchedule(); }, wait);
+}
+function nrProgress() {
+  const el = $('#nrStatus'); if (!el) return;
+  const r = nrGet();
+  el.innerHTML = NR.busy
+    ? `<span class="nr-spin"></span>Checking ${NR.total ? `${NR.done} of ${NR.total} artists` : 'your artists'}…`
+    : r.at ? `From ${r.artists} artists · checked ${sinceStr(r.at)}` : '';
+  const b = $('#nrRefresh'); if (b) b.disabled = NR.busy;
+}
+const nrDay = t => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+const TYPE_NAME = { album: 'Album', single: 'Single', ep: 'EP', compilation: 'Compilation' };
+function nrDraw() {
+  const box = $('#nrList'); if (!box) return;
+  const r = nrGet(), seen = new Set(S.nrSeenBefore || r.seen), f = store.get('nrFilter', 'all');
+  const items = r.items.filter(x => f === 'all' || (f === 'albums' ? x.type === 'album' || x.type === 'compilation' : x.type === 'single' || x.type === 'ep'));
+  $$('[data-nrf]').forEach(b => b.classList.toggle('on', b.dataset.nrf === f));
+  if (!items.length) {
+    box.innerHTML = NR.busy ? '<div class="grid">' + '<div class="skel"></div>'.repeat(6) + '</div>'
+      : S.nrNoFollow ? `<div class="empty small"><p>Amplite needs permission to see the artists you follow.</p><button class="pill-btn" data-allow-login>Allow</button></div>`
+      : `<div class="empty"><h2>Nothing new right now</h2><p>${r.artists ? 'New albums and singles from the past 8 weeks show up here.' : 'Follow artists (the Follow button on their page) and their new albums and singles show up here.'}</p></div>`;
+    return;
+  }
+  const now = Date.now(), wk = 7 * 864e5, used = new Set();
+  const groups = [['This week', x => now - relTime(x.date) < wk], ['Last week', x => now - relTime(x.date) < 2 * wk], ['Earlier', () => true]];
+  box.innerHTML = groups.map(([label, test]) => {
+    const g = items.filter(x => !used.has(x.id) && test(x)); g.forEach(x => used.add(x.id));
+    if (!g.length) return '';
+    return `<section><h2>${label} <em>${g.length}</em></h2><div class="grid">${g.map(x => `<div class="card nr-card" data-open="album:${esc(x.id)}" ${pinAttr({ type: 'album', id: x.id, uri: x.uri, name: x.name, image: x.image })}>
+      <div class="art">${x.image ? `<img src="${esc(x.image)}" alt="" loading="lazy">` : `<div class="ph">${svg('music')}</div>`}${seen.has(x.id) ? '' : '<span class="nr-new">NEW</span>'}
+        <button class="card-play" data-play="${esc(x.uri)}" title="Play">${svg('play')}</button></div>
+      <div class="card-title">${esc(x.name)}</div>
+      <div class="card-sub">${x.artists.slice(0, 2).map(a => `<a data-open="artist:${esc(a.id)}">${esc(a.name)}</a>`).join(', ')}</div>
+      <div class="card-sub nr-when">${TYPE_NAME[x.type] || 'Release'}${x.tracks > 1 ? ` · ${x.tracks} songs` : ''} · ${nrDay(relTime(x.date))}</div></div>`).join('')}</div></section>`;
+  }).join('');
+}
+async function viewReleases(el) {
+  const r = nrGet();
+  S.nrSeenBefore = r.seen.slice(); // the NEW tags stay while you're on the page
+  el.innerHTML = `<div class="pad nr"><header class="lib-head"><div><h1>New releases</h1><p class="nr-sub" id="nrStatus"></p></div>
+      <div class="lib-ctl"><div class="seg st-range"><button data-nrf="all">All</button><button data-nrf="albums">Albums</button><button data-nrf="singles">Singles &amp; EPs</button></div>
+      <button class="pill-btn" id="nrPlayAll" title="Play the songs from the last two weeks of releases">${svg('play')} Play new songs</button>
+      <button class="icon-btn" id="nrRefresh" title="Check again now">${svg('refresh')}</button></div></header>
+    <label class="nr-opt"><input type="checkbox" id="nrTop" ${CFG.ui.nrTop !== false ? 'checked' : ''}> Also include the artists you play most, not only the ones you follow</label>
+    <div id="nrList"></div></div>`;
+  nrProgress(); nrDraw();
+  el.querySelector('.seg').onclick = e => { const b = e.target.closest('[data-nrf]'); if (b) { store.set('nrFilter', b.dataset.nrf); nrDraw(); } };
+  $('#nrRefresh').onclick = () => nrScan(true);
+  $('#nrTop').onchange = e => { setK('ui.nrTop', e.target.checked); nrScan(); };
+  $('#nrPlayAll').onclick = nrPlayAll;
+  $('#nrList').addEventListener('click', e => { if (e.target.closest('[data-allow-login]')) login(); });
+  // Opening the page marks everything as seen, which clears the badge.
+  r.seen = [...new Set([...r.seen, ...r.items.map(x => x.id)])]; nrSave(r); nrBadge();
+  if (!r.at && !NR.busy) nrScan();
+}
+async function nrPlayAll() {
+  const recent = nrGet().items.filter(x => Date.now() - relTime(x.date) < 14 * 864e5).slice(0, 15);
+  if (!recent.length) return toast('Nothing from the last two weeks yet.');
+  const uris = [];
+  for (const x of recent) {
+    try { const d = await api(`/albums/${x.id}/tracks`, { query: { limit: 50 } }); (d?.items || []).forEach(t => uris.push(t.uri)); } catch (e) { if (e.status === 429) break; }
+  }
+  if (uris.length) playUris(uris.slice(0, 100), 0); else toast('Couldn’t load those songs.');
+}
 
 /* ---------------- artist page ---------------- */
 // Spotify no longer gives apps an artist's top tracks, related artists or follower counts, so the
@@ -2534,7 +2685,7 @@ function parseLrc(text) {
   }
   return out.sort((a, b) => a.t - b.t);
 }
-const lyricsWanted = () => D.tab === 'lyrics' || (CFG.amp.lyricLine && ampOpen()) || (IS_APP && CFG.ui.deskLyrics);
+const lyricsWanted = () => FS.open || D.tab === 'lyrics' || (CFG.amp.lyricLine && ampOpen()) || (IS_APP && CFG.ui.deskLyrics);
 async function loadLyrics(n) {
   if (!n?.id) return null;
   if (D.lyrics.has(n.id)) return D.lyrics.get(n.id);
@@ -2572,6 +2723,7 @@ function tickLyrics(force) {
   const p = pos() + 150;
   let i = D.lines.length - 1; while (i >= 0 && D.lines[i].t > p) i--;
   S.lyricLine = i >= 0 ? D.lines[i].text : '';
+  if (FS.open) fsLyric(i);
   if (i === D.active && !force) return;
   D.active = i;
   if (D.tab !== 'lyrics') return;
@@ -2586,6 +2738,155 @@ async function syncLyricsForTrack() {
   const L = await loadLyrics(S.now);
   if (L?.synced?.length && S.now) { D.lines = L.synced; D.cur = S.now.id; D.active = -1; }
   deskLyricsTick();
+}
+
+// ---- full-screen now playing ----
+// Big cover, blurred backdrop, large synced lyrics and a clock. Built once, then only the parts
+// that change are touched (progress every tick, the lyric line when it changes, the rest per song).
+const FS = { open: false, el: null, id: null, active: -2, idleT: null, clockT: null, bgFlip: 0, art: '' };
+const bigArt = u => (u || '').replace(/(ab67616d0000)(4851|1e02)/, '$1b273');
+function openFull() {
+  if (FS.open) return;
+  FS.open = true;
+  if (!FS.el) {
+    FS.el = document.createElement('div'); FS.el.id = 'fs'; FS.el.tabIndex = -1;
+    FS.el.innerHTML = `<div class="fs-bg"><i></i><i></i></div><div class="fs-shade"></div>
+      <header class="fs-top"><div class="fs-clock"><b id="fsTime"></b><span id="fsDate"></span></div>
+        <button class="icon-btn fs-x" data-fs="close" title="Exit full screen (Esc)">${svg('x')}</button></header>
+      <div class="fs-main">
+        <div class="fs-left">
+          <div class="fs-cover"><img id="fsArt" alt=""></div>
+          <div class="fs-meta"><h1 id="fsTitle"></h1><p id="fsArtist"></p><p class="fs-album" id="fsAlbum"></p></div>
+          <div class="fs-prog"><span id="fsCur">0:00</span><div class="fs-bar" id="fsBar"><i id="fsFill"></i></div><span id="fsDur">0:00</span></div>
+          <div class="fs-ctl">
+            <button class="icon-btn" data-fs="like" id="fsLike" title="Like"></button>
+            <button class="icon-btn" data-fs="prev" title="Previous">${svg('prev')}</button>
+            <button class="fs-play" data-fs="play" id="fsPlay" title="Play / Pause (Space)"></button>
+            <button class="icon-btn" data-fs="next" title="Next">${svg('next')}</button>
+            <button class="icon-btn" data-fs="lyrics" id="fsLyrBtn" title="Show or hide lyrics">${svg('mic')}</button>
+          </div>
+        </div>
+        <div class="fs-lyrics" id="fsLyrics"><div class="fs-lines" id="fsLines"></div></div>
+      </div>
+      <footer class="fs-next" id="fsNext"></footer>`;
+    document.body.append(FS.el);
+    FS.el.addEventListener('click', e => {
+      const b = e.target.closest('[data-fs]'); if (b) {
+        const a = b.dataset.fs;
+        if (a === 'close') return closeFull();
+        if (a === 'play') return togglePlay();
+        if (a === 'next') return next();
+        if (a === 'prev') return prev();
+        if (a === 'like') return toggleLike();
+        if (a === 'lyrics') { setK('ui.fsLyrics', CFG.ui.fsLyrics === false); FS.id = null; return fsTrack(); }
+      }
+      const li = e.target.closest('#fsLines p[data-t]'); if (li) return seek(+li.dataset.t);
+      const bar = e.target.closest('#fsBar'); if (bar && S.now?.duration) { const r = bar.getBoundingClientRect(); seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * S.now.duration); }
+      const ar = e.target.closest('#fsArtist a[data-open], #fsAlbum a[data-open]'); if (ar) closeFull();
+    });
+    FS.el.addEventListener('mousemove', fsWake);
+    FS.el.addEventListener('dblclick', e => { if (!e.target.closest('button, a, #fsBar, #fsLines p')) closeFull(); });
+  }
+  FS.id = null; FS.active = -2;
+  FS.el.classList.remove('hidden'); document.body.classList.add('fs-on');
+  requestAnimationFrame(() => FS.el.classList.add('show'));
+  if (IS_APP) window.amplite.fullscreen(true);
+  fsClock(); fsTrack(); fsState(); fsWake();
+  syncLyricsForTrack();
+  FS.el.focus();
+}
+function closeFull(fromMain) {
+  if (!FS.open) return;
+  FS.open = false; clearTimeout(FS.idleT); clearTimeout(FS.clockT);
+  FS.el.classList.remove('show', 'idle'); document.body.classList.remove('fs-on');
+  setTimeout(() => { if (!FS.open) FS.el.classList.add('hidden'); }, 260);
+  if (IS_APP && !fromMain) window.amplite.fullscreen(false);
+}
+const toggleFull = () => FS.open ? closeFull() : openFull();
+// Controls and cursor hide after a few seconds without the mouse moving.
+function fsWake() {
+  if (!FS.open) return;
+  FS.el.classList.remove('idle'); clearTimeout(FS.idleT);
+  FS.idleT = setTimeout(() => { if (FS.open && !FS.el.querySelector(':hover.fs-ctl, .fs-ctl:hover')) FS.el.classList.add('idle'); }, 3000);
+}
+function fsClock() {
+  if (!FS.open) return;
+  const d = new Date();
+  setText($('#fsTime'), d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+  setText($('#fsDate'), d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }));
+  FS.clockT = setTimeout(fsClock, 60000 - d.getSeconds() * 1000 - d.getMilliseconds() + 50);
+}
+// New song: cover, backdrop (cross-faded), titles, lyrics, up next.
+function fsTrack() {
+  if (!FS.open) return;
+  const n = S.now, id = n?.id || '';
+  if (id === FS.id) return;
+  FS.id = id; FS.active = -2;
+  const art = bigArt(n?.album?.image);
+  const im = $('#fsArt'); if (im.getAttribute('src') !== art) { im.classList.remove('in'); if (art) im.src = art; else im.removeAttribute('src'); }
+  if (art !== FS.art) {
+    FS.art = art; FS.bgFlip ^= 1;
+    const layers = FS.el.querySelectorAll('.fs-bg i');
+    layers[FS.bgFlip].style.backgroundImage = art ? `url("${art.replace(/"/g, '%22')}")` : '';
+    layers[FS.bgFlip].classList.add('on'); layers[FS.bgFlip ^ 1].classList.remove('on');
+  }
+  setText($('#fsTitle'), n?.name || 'Nothing playing');
+  $('#fsArtist').innerHTML = n ? artistLinks(n.artists) : 'Pick something to play';
+  $('#fsAlbum').innerHTML = n?.album?.name ? (n.album.id ? `<a data-open="album:${esc(n.album.id)}">${esc(n.album.name)}</a>` : esc(n.album.name)) : '';
+  setText($('#fsDur'), fmt(n?.duration || 0));
+  fsLyrics();
+  const nx = $('#fsNext'); nx.innerHTML = '';
+  if (n) api('/me/player/queue', { bg: true }).then(q => {
+    if (!FS.open || FS.id !== id) return;
+    const t = (q?.queue || []).find(x => x && x.uri !== n.uri);
+    nx.innerHTML = t ? `<span>Up next</span><b>${esc(t.name)}</b> · ${esc((t.artists || []).map(a => a.name).join(', '))}` : '';
+  }).catch(() => {});
+}
+async function fsLyrics() {
+  const n = S.now, box = $('#fsLyrics'), lines = $('#fsLines');
+  const want = CFG.ui.fsLyrics !== false;
+  $('#fsLyrBtn')?.classList.toggle('on', want);
+  FS.el.classList.toggle('no-lyrics', true);
+  lines.innerHTML = ''; lines.style.transform = '';
+  if (!n || !want) return;
+  const L = await loadLyrics(n);
+  if (!FS.open || S.now?.id !== n.id) return;
+  if (L?.synced?.length) {
+    D.lines = L.synced; D.cur = n.id;
+    lines.innerHTML = L.synced.map(l => `<p data-t="${l.t}">${esc(l.text) || '♪'}</p>`).join('');
+    lines.classList.add('synced');
+  } else if (L?.plain) {
+    lines.innerHTML = L.plain.split('\n').map(l => `<p>${esc(l) || '&nbsp;'}</p>`).join('');
+    lines.classList.remove('synced');
+  } else return;
+  FS.el.classList.remove('no-lyrics'); box.scrollTop = 0;
+  FS.active = -2; tickLyrics(true);
+}
+// Called with the current lyric line's index: highlight it and glide it to the middle.
+function fsLyric(i) {
+  if (!FS.open || i === FS.active) return;
+  const lines = $('#fsLines'); if (!lines?.classList.contains('synced')) return;
+  FS.active = i;
+  lines.querySelector('p.on')?.classList.remove('on');
+  const p = lines.children[Math.max(0, i)];
+  if (i >= 0 && p) p.classList.add('on');
+  if (p) lines.style.transform = `translateY(${Math.round(lines.parentElement.clientHeight * 0.42 - p.offsetTop - p.offsetHeight / 2)}px)`;
+}
+// Play/pause, like, progress.
+function fsState() {
+  if (!FS.open) return;
+  const n = S.now;
+  const pb = $('#fsPlay'); const want = n && !n.paused ? 'pause' : 'play';
+  if (pb.dataset.s !== want) { pb.dataset.s = want; pb.innerHTML = svg(want); }
+  const lb = $('#fsLike'), liked = !!S.liked;
+  if (lb.dataset.s !== String(liked)) { lb.dataset.s = String(liked); if (!lb.firstChild) lb.innerHTML = svg('heart'); lb.classList.toggle('liked', liked); lb.title = liked ? 'Remove from Liked Songs' : 'Save to Liked Songs'; }
+  FS.el.classList.toggle('paused', !n || !!n.paused);
+}
+function fsTick() {
+  if (!FS.open) return;
+  const n = S.now, d = n?.duration || 0, p = pos();
+  setText($('#fsCur'), fmt(p));
+  $('#fsFill').style.transform = `scaleX(${d ? Math.min(1, p / d) : 0})`;
 }
 
 // ---- desktop lyrics (floating, always-on-top lyric strip) ----
@@ -2992,6 +3293,8 @@ function onKey(e) {
     if ((e.key === 'Delete' || e.key === 'Backspace') && SEL.idx.size && S.lists[SEL.li]?.removable && S.pl?.editable) { e.preventDefault(); removeTracks(SEL.li, selTracks()); return; }
     if (e.key === 'Escape' && SEL.idx.size) { clearSel(); return; }
   }
+  if (FS.open && (e.key === 'Escape' || (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey))) { e.preventDefault(); closeFull(); return; }
+  if (FS.open && e.code !== 'Space' && !e.ctrlKey && !e.metaKey) { fsWake(); return; } // other keys do nothing over the full-screen view
   if (e.key === 'Escape' && !$('#settings').classList.contains('hidden')) { closeSettings(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleSidebar(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); openSettings(); return; }
@@ -3003,6 +3306,7 @@ function onKey(e) {
   else if (e.key.toLowerCase() === 'q' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openDrawer('queue');
   else if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openDrawer('lyrics');
   else if (e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openDrawer('info');
+  else if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !S.ampWin) openFull();
   else if (e.key === '/' && !S.ampWin) { e.preventDefault(); navigate('search'); }
 }
 
@@ -3022,6 +3326,7 @@ function bind() {
   $('#repBtn').onclick = cycleRepeat;
   $('#likeBtn').onclick = toggleLike;
   $('#ampBtn').onclick = toggleAmp;
+  $('#fullBtn').onclick = openFull;
   $('#deviceBtn').onclick = playHere;
   $('#muteBtn').onclick = () => setVolume(S.volume > 0 ? 0 : S.lastVol || 0.5);
 
@@ -3589,6 +3894,8 @@ async function boot() {
       const m = /^(vol|seek):([+-]\d+)$/.exec(cmd);
       if (m && m[1] === 'vol') { setVolume(S.volume + +m[2] / 100); syncVolume(); return; }
       if (m && m[1] === 'seek') { if (S.now?.duration) seek(Math.max(0, Math.min(S.now.duration - 1000, pos() + +m[2]))); return; }
+      if (cmd === 'fullscreen-off') return closeFull(true);
+      if (cmd === 'fullscreen') return toggleFull();
       if (cmd === 'desklyrics') return toggleDeskLyrics();
       if (cmd === 'desklyrics-lock') return setK('ui.dlLocked', true);
       if (cmd === 'desklyrics-unlock') return setK('ui.dlLocked', false);
@@ -3637,6 +3944,7 @@ async function boot() {
   await loadPlaylists();
   navigate('home');
   if (IS_APP) initEngine(); else initSDK();
+  nrBadge(); nrSchedule();
   if (IS_APP && (await window.amplite.startupMode()) === 'amp') setTimeout(() => toggleAmp(), 600);
   poll();
   schedulePoll();

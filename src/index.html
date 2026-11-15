@@ -49,6 +49,7 @@
         <button class="nav-item" data-open="search:" data-view="search" data-i="search" title="Search"><span>Search</span></button>
         <button class="nav-item" data-open="liked:" data-view="liked" data-i="heart" title="Liked Songs"><span>Liked Songs</span></button>
         <button class="nav-item" data-open="library:" data-view="library" data-i="library" title="Saved albums and artists you follow"><span>Library</span></button>
+        <button class="nav-item" data-open="releases:" data-view="releases" data-i="bell" title="New releases from artists you follow"><span>New releases</span><b class="nav-badge" id="nrBadge" hidden></b></button>
         <button class="nav-item" data-open="stats:" data-view="stats" data-i="chart" title="Your stats"><span>Stats</span></button>
       </nav>
       <div id="pinSection" class="pin-section hidden">
@@ -117,6 +118,7 @@
       </div>
       <div class="extra">
         <button id="deviceBtn" class="device-chip hidden"></button>
+        <button id="fullBtn" class="icon-btn" data-i="expand" title="Full screen (F)"></button>
         <button id="infoBtn" class="icon-btn toggle" data-i="info" title="About this song (I)"></button>
         <button id="lyricsBtn" class="icon-btn toggle" data-i="mic" title="Lyrics (L)"></button>
         <button id="queueBtn" class="icon-btn toggle" data-i="queue" title="Queue (Q)"></button>
