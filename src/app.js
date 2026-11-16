@@ -935,7 +935,7 @@ async function viewLibrary(el, _arg, alive) {
   $('#libGrid').addEventListener('click', e => { if (e.target.closest('[data-allow-login]')) login(); });
   el.querySelector('.lib-ctl').addEventListener('click', e => { const b = e.target.closest('[data-libtab]'); if (b && b.dataset.libtab !== tab) { store.set('libTab', b.dataset.libtab); navigate('library', '', false); } });
 }
-const VIEWS = { releases: viewReleases, library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
+const VIEWS = { discover: viewDiscover, releases: viewReleases, library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
 let navToken = 0;
 
 async function navigate(name, arg = '', push = true) {
@@ -1135,12 +1135,14 @@ async function viewHome(el, _, alive) {
   el.innerHTML = `<div class="home"><div class="pad">
     <h1 class="greet">${greet}${first ? ', ' + esc(first) : ''}</h1>
     <div class="quick">${tiles.join('')}</div>
+    <section id="hDiscover" hidden></section>
     <section><h2>Jump back in</h2><div class="grid" id="hRecent">${'<div class="skel"></div>'.repeat(6)}</div></section>
     <section><h2>On repeat lately</h2><div id="hTop"><p class="muted">Loading…</p></div></section>
     <section id="hArtists" hidden></section>
     <section id="hRedis" hidden></section>
   </div></div>`;
   homeFromHistory(alive);
+  dmHome(alive);
 
   api('/me/player/recently-played', { query: { limit: 50 } }).then(d => {
     if (!alive()) return;
@@ -1354,6 +1356,122 @@ function ago(t) {
   return new Date(t).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
 }
 const dayStr = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+/* ---------------- Discover Mix (weekly) ---------------- */
+// Every Monday: 30 songs by artists you've never played, picked from Last.fm's "similar artists" of
+// your favourites, one song per artist. Saved as a Spotify playlist too (can be turned off).
+const DM = { busy: false, t: null, step: '' };
+const dmKey = () => 'discover:' + (S.me?.id || '');
+const dmGet = () => store.get(dmKey(), null) || { week: '', at: 0, tracks: [], plId: '' };
+const dmSave = d => store.set(dmKey(), d);
+// The Monday that starts this week, as YYYY-MM-DD (local time).
+function weekStart(t = Date.now()) { const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+const dmHasKey = async () => IS_APP && !!(await window.amplite.lastfm('state').catch(() => null))?.state?.key;
+async function dmMake({ quiet = false } = {}) {
+  if (DM.busy || !S.me) return;
+  DM.busy = true; DM.step = 'Looking at what you listen to…'; dmProgress();
+  try {
+    const hist = await histItems().catch(() => []);
+    const cut = Date.now() / 1000 - 90 * 86400, plays = new Map(), known = new Set();
+    for (const h of hist) {
+      for (const a of h.artists || [h.artist]) if (a) known.add(a);
+      if (h.ts >= cut && h.artist) plays.set(h.artists?.[0] || h.artist, (plays.get(h.artists?.[0] || h.artist) || 0) + 1);
+    }
+    const seeds = [...plays].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([a]) => a);
+    DM.step = 'Finding artists you haven’t heard…'; dmProgress();
+    const r = await window.amplite.lastfm('discover', { seeds, known: [...known], want: 30 });
+    if (!r?.ok) throw new Error(r?.error === 'nokey' ? 'nokey' : r?.error || 'Last.fm didn’t answer');
+    if (!r.picks?.length) throw new Error(seeds.length ? 'Last.fm found no new artists this time. Try again later.' : 'Play some music first, so Amplite knows what you like.');
+    DM.step = 'Finding the songs on Spotify…'; dmProgress();
+    const knownLc = new Set([...known].map(a => a.toLowerCase())), seenArtist = new Set(), out = [];
+    // Resolve a few at a time and stop once there are 30 (one song per artist).
+    for (let i = 0; i < r.picks.length && out.length < 30; i += 6) {
+      const batch = r.picks.slice(i, i + 6);
+      const hits = await pool(batch, 3, p => resolveRec(p.artist, p.title));
+      hits.forEach((t, j) => {
+        if (!t || out.length >= 30) return;
+        const a = t.artists[0]?.name?.toLowerCase();
+        if (!a || seenArtist.has(a) || knownLc.has(a)) return;
+        seenArtist.add(a); out.push({ ...t, because: batch[j].because || [] });
+      });
+      DM.step = `Finding the songs on Spotify… ${out.length} of 30`; dmProgress();
+      if (rateLimited()) break;
+    }
+    if (out.length < 8) throw new Error('Couldn’t find enough of those songs on Spotify right now. Try again in a bit.');
+    const d = dmGet();
+    Object.assign(d, { week: weekStart(), at: Date.now(), tracks: out });
+    dmSave(d);
+    if (CFG.ui.dmSave !== false) await dmToSpotify(d).catch(() => {});
+    if (!quiet || S.cur?.name !== 'discover') toast(`Your Discover Mix is ready: ${out.length} songs from artists you haven’t heard`, { label: 'Open', run: () => navigate('discover') });
+  } catch (e) {
+    S.dmError = e.message;
+    if (!quiet) toast(e.message === 'nokey' ? 'Discover Mix needs a Last.fm API key (Settings → Connections).' : e.message);
+  } finally {
+    DM.busy = false; DM.step = ''; dmProgress();
+    if (S.cur?.name === 'discover') navigate('discover', '', false);
+    if (S.cur?.name === 'home') dmHome(() => true);
+  }
+}
+// Keep one "Discover Mix" playlist in Spotify and replace its songs each week.
+async function dmToSpotify(d) {
+  const uris = d.tracks.map(t => t.uri);
+  const desc = `Artists you haven't heard yet, picked for you by Amplite every Monday. Week of ${new Date(d.week + 'T12:00:00').toLocaleDateString([], { month: 'long', day: 'numeric' })}.`;
+  if (d.plId) {
+    try { await api(`/playlists/${d.plId}/items`, { method: 'PUT', body: { uris } }); await api(`/playlists/${d.plId}`, { method: 'PUT', body: { description: desc } }).catch(() => {}); return; }
+    catch (e) { if (e.status !== 404 && e.status !== 403) throw e; }
+  }
+  const pl = await api('/me/playlists', { method: 'POST', body: { name: 'Discover Mix', description: desc, public: false } });
+  await api(`/playlists/${pl.id}/items`, { method: 'POST', body: { uris } });
+  d.plId = pl.id; dmSave(d);
+  loadPlaylists().catch(() => {});
+}
+// Check on startup and every few hours; make a new mix once a week (Monday or the first time after).
+function dmSchedule(first = true) {
+  clearTimeout(DM.t);
+  DM.t = setTimeout(async () => {
+    if (CFG.ui.dmOn !== false && dmGet().week !== weekStart() && !rateLimited() && await dmHasKey()) await dmMake({ quiet: true });
+    dmSchedule(false);
+  }, first ? 90e3 : 3 * 3600e3);
+}
+function dmProgress() {
+  const el = $('#dmStatus'); if (el) el.innerHTML = DM.busy ? `<span class="nr-spin"></span>${esc(DM.step)}` : '';
+  const b = $('#dmNew'); if (b) b.disabled = DM.busy;
+}
+const dmCover = d => `<div class="dm-art">${[0, 1, 2, 3].map(i => d.tracks[i]?.album?.image ? `<img src="${esc(d.tracks[i].album.image)}" alt="">` : '<i></i>').join('')}<span>Discover<br>Mix</span></div>`;
+async function viewDiscover(el, _a, alive) {
+  const d = dmGet(), has = d.tracks.length > 0, hasKey = await dmHasKey();
+  if (!alive()) return;
+  const total = d.tracks.reduce((t, x) => t + (x.duration || 0), 0);
+  S.hero = null;
+  el.innerHTML = hero({
+    art: dmCover(d), kind: 'Made for you', title: 'Discover Mix',
+    desc: 'Artists you haven’t played yet, picked from the ones you love. A new mix every Monday.',
+    meta: has ? `Week of ${new Date(d.week + 'T12:00:00').toLocaleDateString([], { month: 'long', day: 'numeric' })} · ${d.tracks.length} songs, ${longDur(total)}` : '',
+    extra: `<button class="pill-btn ghost" id="dmNew" title="Make a new mix now">${svg('refresh')} New mix</button>${d.plId ? `<button class="pill-btn ghost" data-open="playlist:${esc(d.plId)}">Open the playlist</button>` : ''}`,
+  }) + `<div class="pad"><p class="nr-sub" id="dmStatus"></p>
+    <label class="nr-opt"><input type="checkbox" id="dmSaveCb" ${CFG.ui.dmSave !== false ? 'checked' : ''}> Keep it as a “Discover Mix” playlist in Spotify</label>
+    ${has ? trackTable(d.tracks) : `<div class="empty"><h2>${DM.busy ? 'Making your first mix…' : 'No mix yet'}</h2><p>${S.dmError === 'nokey' || !hasKey ? 'Discover Mix uses Last.fm to find artists similar to your favourites. Add a free Last.fm API key in Settings → Connections, then click New mix.' : esc(S.dmError || 'Click New mix to make one now.')}</p></div>`}</div>`;
+  // "Because you like …" under each song.
+  if (has) $$('.tracks .trow', el).forEach(row => {
+    const t = d.tracks[+row.dataset.idx], b = t?.because?.filter(Boolean);
+    if (b?.length) row.querySelector('.ttext')?.insertAdjacentHTML('beforeend', `<div class="tbecause">Because you like ${b.map(esc).join(' and ')}</div>`);
+  });
+  $('#dmNew').onclick = () => { S.dmError = ''; dmMake(); };
+  $('#dmSaveCb').onchange = e => { setK('ui.dmSave', e.target.checked); if (e.target.checked && has) dmToSpotify(dmGet()).then(() => toast('Saved as “Discover Mix” in your playlists.')).catch(er => toast(er.message)); };
+  dmProgress();
+  if (!has && !DM.busy && hasKey && !S.dmError) dmMake({ quiet: true });
+}
+// Home: a banner for this week's mix.
+function dmHome(alive) {
+  const box = $('#hDiscover'); if (!box || !alive()) return;
+  const d = dmGet(); if (!d.tracks.length) { box.hidden = true; return; }
+  const names = [...new Set(d.tracks.map(t => t.artists[0]?.name).filter(Boolean))].slice(0, 4);
+  box.hidden = false;
+  box.innerHTML = `<div class="dm-banner" data-open="discover:">${dmCover(d)}<div class="dm-text"><small>Made for you · ${d.week === weekStart() ? 'new this week' : 'last week’s mix'}</small><h3>Discover Mix</h3>
+    <p>${names.map(esc).join(', ')} and more, ${d.tracks.length} songs from artists you haven’t heard.</p></div>
+    <button class="big-play" data-dm-play title="Play">${svg('play')}</button></div>`;
+  box.querySelector('[data-dm-play]').onclick = e => { e.stopPropagation(); playUris(d.tracks.filter(t => t.playable !== false).map(t => t.uri), 0); };
+}
 
 /* ---------------- new releases (Release Radar) ---------------- */
 // Checks the artists you follow (plus, optionally, the ones you play most) for new albums and
@@ -3944,7 +4062,7 @@ async function boot() {
   await loadPlaylists();
   navigate('home');
   if (IS_APP) initEngine(); else initSDK();
-  nrBadge(); nrSchedule();
+  nrBadge(); nrSchedule(); dmSchedule();
   if (IS_APP && (await window.amplite.startupMode()) === 'amp') setTimeout(() => toggleAmp(), 600);
   poll();
   schedulePoll();

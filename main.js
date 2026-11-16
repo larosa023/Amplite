@@ -589,6 +589,7 @@ ipcMain.handle('lastfm', async (_e, action, a = {}) => {
   try {
     if (action === 'connect') return { ok: true, state: await L.connect(a.key, a.secret) };
     if (action === 'artist') { if (!L.state().key) return { ok: false, error: 'nokey' }; return { ok: true, artist: await L.artist(String(a.name || '').slice(0, 200)) }; }
+    if (action === 'discover') { if (!L.state().key) return { ok: false, error: 'nokey' }; return { ok: true, picks: await L.discover({ seeds: (a.seeds || []).map(String).slice(0, 15), known: (a.known || []).map(String).slice(0, 5000), want: Math.min(60, +a.want || 30) }) }; }
     if (action === 'similar') { if (!L.state().key) return { ok: false, error: 'nokey' }; return { ok: true, similar: await L.similar(a) }; }
     if (action === 'disconnect') L.disconnect();
     if (action === 'on') L.setOn(a.on);

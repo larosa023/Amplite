@@ -194,6 +194,46 @@ async function lfmSimilar({ tracks = [], artists = [], limit = 25 } = {}) {
   ]);
   return out;
 }
+// Weekly Discover mix: artists similar to your favourites that you've never played, one popular
+// song from each. "seeds" are your top artist names, "known" every artist name you've played.
+async function lfmDiscover({ seeds = [], known = [], want = 30 } = {}) {
+  const norm = s => String(s || '').toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9À-￿]+/g, '');
+  const knownSet = new Set(known.map(norm));
+  seeds = seeds.slice(0, 15);
+  if (lfm.user) {
+    // Everything you've ever scrobbled counts as known too.
+    try { const j = await lfmPublic('user.getTopArtists', { user: lfm.user, period: 'overall', limit: '1000' }); (j.topartists?.artist || []).forEach(a => knownSet.add(norm(a.name))); } catch {}
+    if (seeds.length < 8) try { const j = await lfmPublic('user.getTopArtists', { user: lfm.user, period: '3month', limit: '15' }); (j.topartists?.artist || []).forEach(a => { if (!seeds.includes(a.name)) seeds.push(a.name); }); } catch {}
+  }
+  seeds.forEach(a => knownSet.add(norm(a)));
+  const cand = new Map();
+  const run = async (items, n, fn) => { let i = 0; await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) await fn(items[i++]); })); };
+  await run(seeds.slice(0, 15), 4, async (seed, rank = seeds.indexOf(seed)) => {
+    try {
+      const j = await lfmPublic('artist.getSimilar', { artist: seed, limit: '40' });
+      for (const x of j.similarartists?.artist || []) {
+        const k = norm(x.name); if (!k || knownSet.has(k)) continue;
+        const w = (+x.match || 0) * (1 - rank / 30); // closer to your very top artists counts a bit more
+        const c = cand.get(k) || { name: x.name, score: 0, seeds: [] };
+        c.score += w; c.seeds.push({ seed, w }); cand.set(k, c);
+      }
+    } catch {}
+  });
+  // Artists similar to several of your favourites rank first; a little randomness keeps weeks different.
+  const ranked = [...cand.values()].map(c => ({ ...c, score: c.score * (1 + 0.15 * (c.seeds.length - 1)) * (0.85 + Math.random() * 0.3) }))
+    .sort((a, b) => b.score - a.score).slice(0, Math.ceil(want * 1.6));
+  const out = [];
+  await run(ranked, 5, async c => {
+    try {
+      const j = await lfmPublic('artist.getTopTracks', { artist: c.name, limit: '6' });
+      const tops = (j.toptracks?.track || []).filter(t => t.name && !/\b(live|remix|demo|acoustic|edit)\b/i.test(t.name));
+      if (!tops.length) return;
+      const t = tops[Math.floor(Math.random() * Math.min(3, tops.length))];
+      out.push({ artist: c.name, title: t.name, score: c.score, because: c.seeds.sort((a, b) => b.w - a.w).slice(0, 2).map(x => x.seed), listeners: +t.listeners || 0 });
+    } catch {}
+  });
+  return out.sort((a, b) => b.score - a.score);
+}
 // Artist page: bio, listener/scrobble counts, your own scrobbles, tags, similar artists, top tracks.
 async function lfmArtist(name) {
   const params = { artist: name, lang: 'en' }; if (lfm.user) params.username = lfm.user;
@@ -359,7 +399,7 @@ function nowState() {
 module.exports = {
   init, configure, update, setExtra, nowState,
   discordStatus: () => discord.status, onDiscord: f => { discordListener = f; },
-  lastfm: { state: lfmState, similar: lfmSimilar, artist: lfmArtist, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
+  lastfm: { state: lfmState, similar: lfmSimilar, discover: lfmDiscover, artist: lfmArtist, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
   history: { read: readHistory, append: appendHistory, clear: clearHistory, lastfmPage: lfmRecent, tags: a => lfmPublic('artist.getTopTags', { artist: a }).then(j => (j.toptags?.tag || []).slice(0, 8).map(t => ({ name: t.name, count: +t.count || 0 }))) },
   shutdown() { try { lfmTick(); commitPlay(held?.track || cur.track, held ? held.listened : lfm.listened, true); held = null; } catch {}
     try { if (discord.sock) { frame(1, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: crypto.randomUUID() }); discord.sock.end(); } } catch {} },
