@@ -1086,3 +1086,28 @@ kbd { white-space:nowrap; }
 #hDiscover { margin-bottom:8px; }
 .tbecause { font-size:11.5px; color:var(--muted); opacity:.8; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .trow:has(.tbecause) { min-height:62px; }
+
+/* ============ Playlist cover maker ============ */
+.hero-art-wrap { position:relative; flex:none; border-radius:8px; }
+.cover-edit { position:absolute; inset:0; border:0; border-radius:8px; background:#000a; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; font-size:13px; font-weight:700; opacity:0; transition:opacity .15s; cursor:pointer; }
+.cover-edit svg { width:34px; height:34px; }
+.hero-art-wrap:hover .cover-edit, .cover-edit:focus-visible { opacity:1; }
+.cv-card { width:min(900px, 100%); height:auto; max-height:100%; }
+.cv-body { display:grid; grid-template-columns:minmax(0, 1fr) 350px; gap:24px; padding:22px; overflow:auto; }
+.cv-prev { display:grid; place-items:center; }
+.cv-prev canvas { width:100%; max-width:440px; aspect-ratio:1; border-radius:8px; box-shadow:0 14px 40px #0008; cursor:pointer; background:var(--elev); }
+.cv-side { display:flex; flex-direction:column; gap:18px; min-width:0; }
+.cv-sec h4 { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700; margin:0 0 8px; }
+.cv-seg { display:flex; flex-wrap:wrap; }
+.cv-seg button { flex:1; white-space:nowrap; }
+.cv-seg button:disabled { opacity:.45; cursor:default; }
+.cv-row { display:flex; gap:8px; margin-top:10px; }
+.cv-row .btn svg { width:14px; height:14px; vertical-align:-2px; margin-right:4px; }
+.cv-row [hidden] { display:none; }
+.cv-hint { font-size:12px; color:var(--muted); margin:8px 0 0; line-height:1.45; }
+.cv-check { display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; }
+.cv-text { width:100%; margin:8px 0; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--elev); color:var(--text); font:inherit; font-size:13px; }
+.cv-text:disabled { opacity:.5; }
+.cv-actions { display:flex; align-items:center; gap:8px; margin-top:auto; padding-top:8px; }
+.cv-actions .btn { white-space:nowrap; }
+@media (max-width: 760px) { .cv-body { grid-template-columns:minmax(0,1fr); } }

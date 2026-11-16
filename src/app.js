@@ -17,7 +17,7 @@ const SCOPES = [
   'playlist-read-private', 'playlist-read-collaborative',
   'playlist-modify-public', 'playlist-modify-private',
   'user-top-read', 'user-read-recently-played',
-  'user-follow-read', 'user-follow-modify',
+  'user-follow-read', 'user-follow-modify', 'ugc-image-upload',
 ].join(' ');
 
 const THEMES = [
@@ -213,7 +213,7 @@ const RL = { until: 0, chain: Promise.resolve(), told: 0, errors: [] };
 const rateLimited = () => Date.now() < RL.until;
 function noteApiError(status, url) { RL.errors.push(`${new Date().toLocaleTimeString()} ${status} ${url.replace('https://api.spotify.com/v1', '').split('?')[0]}`); if (RL.errors.length > 25) RL.errors.shift(); }
 function bgSlot() { const p = RL.chain.then(() => sleep(180)); RL.chain = p.catch(() => {}); return p; }
-async function api(path, { method = 'GET', body, query, fresh = false, bg = false } = {}, retry = true) {
+async function api(path, { method = 'GET', body, raw, query, fresh = false, bg = false } = {}, retry = true) {
   let url = path.startsWith('http') ? path : 'https://api.spotify.com/v1' + path;
   if (query) url += (url.includes('?') ? '&' : '?') + new URLSearchParams(query);
   if (cacheable(method, url) && !fresh) {
@@ -231,12 +231,12 @@ async function api(path, { method = 'GET', body, query, fresh = false, bg = fals
   const token = await getToken();
   const r = await fetch(url, {
     method,
-    headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
+    headers: { Authorization: 'Bearer ' + token, ...(raw ? { 'Content-Type': raw.type } : body ? { 'Content-Type': 'application/json' } : {}) },
+    body: raw ? raw.data : body ? JSON.stringify(body) : undefined,
   });
   if (r.status === 401 && retry) {
     const t = store.get('token'); if (t) { t.expires_at = 0; store.set('token', t); }
-    return api(path, { method, body, query }, false);
+    return api(path, { method, body, raw, query }, false);
   }
   if (r.status === 429) {
     // Spotify's Retry-After often isn't readable from the app, so back off on our own too:
@@ -246,7 +246,7 @@ async function api(path, { method = 'GET', body, query, fresh = false, bg = fals
     const wait = Math.min(Math.max(told, own), 86400);
     RL.until = Math.max(RL.until, Date.now() + wait * 1000);
     noteApiError(429, url);
-    if (retry && !bg && RL.strikes === 1) { await sleep(1500); return api(path, { method, body, query, fresh }, false); }
+    if (retry && !bg && RL.strikes === 1) { await sleep(1500); return api(path, { method, body, raw, query, fresh }, false); }
     if (RL.strikes >= 2 && Date.now() - RL.told > 10 * 60000) {
       RL.told = Date.now();
       toast(`Spotify is limiting Amplite for a few minutes. Song suggestions and stats lookups wait until then.`);
@@ -1290,6 +1290,10 @@ async function viewPlaylist(el, id, alive) {
   }) + (tracks.length > 4 ? `<div class="pad pl-summary" id="plSummary">${plMostly(tracks)}</div>` : '') + `<div class="pad">${tracks.length ? trackTable(tracks, { context: pl.uri, removable: editable })
     : editable ? `<div class="empty small"><p>This playlist is empty.</p><button class="pill-btn" data-add-songs>${svg('plus')} Add songs</button></div>` : ''}${note ? `<p class="note">${note}</p>` : ''}</div>`
     + (tracks.length ? `<section class="recs pad" id="recs" data-pl="${esc(pl.id)}"></section>` : '');
+  if (S.pl.own && IS_APP) {
+    const ha = el.querySelector('.hero-art');
+    if (ha) { const w = document.createElement('div'); w.className = 'hero-art-wrap'; ha.replaceWith(w); w.append(ha); w.insertAdjacentHTML('beforeend', `<button class="cover-edit" data-cover-edit title="Change cover">${svg('edit')}<span>Change cover</span></button>`); }
+  }
   initListTools();
   if (tracks.length) initRecs(pl.id);
   if (tracks.length > 4) histItems().then(h => {
@@ -2285,8 +2289,29 @@ function playlistTools(e) {
     ]), 0) });
     items.push('-');
   }
+  if (pl?.own && IS_APP) items.push({ icon: 'edit', label: 'Change cover…', run: openCoverMaker });
   if (IS_APP) items.push({ icon: 'share', label: 'Export as spreadsheet (CSV)…', run: exportPlaylist });
   showCtx(e, items);
+}
+
+// ---- playlist cover maker (lazy-loaded) ----
+async function openCoverMaker() {
+  const pl = S.pl; if (!pl) return;
+  if (!pl.own) return toast('Spotify only lets a playlist’s owner change its cover.');
+  if (!IS_APP) return toast('Cover changes need the desktop app.');
+  const { openCover } = await import('./cover.js');
+  openCover({ api, needsScope, toast, svg, esc }, pl, S.lists[0]?.orig || [], data => {
+    // Show it straight away; Spotify takes a few seconds to process the upload.
+    const h = $('.hero-art'); if (h && S.pl?.id === pl.id) { if (h.tagName === 'IMG') h.src = data; else h.outerHTML = `<img class="hero-art" src="${data}" alt="">`; }
+    const sb = S.playlists?.find(p => p?.id === pl.id); if (sb) sb.images = [{ url: data }];
+    $$(`#playlists [data-id="${CSS.escape(pl.id)}"] img, #playlists [data-id="${CSS.escape(pl.id)}"] .ph`).forEach(x => { x.outerHTML = `<img src="${data}" alt="">`; });
+    const pins = getPins(), pi = pins.findIndex(p => p.type === 'playlist' && p.id === pl.id);
+    toast('Cover updated. It can take Spotify a minute to show it everywhere.');
+    setTimeout(() => { purgeCache(new RegExp(`/playlists/${pl.id}`)); refreshPlaylists().then(() => {
+      const fresh = S.playlists?.find(p => p?.id === pl.id), u = img(fresh?.images, 64);
+      if (pi >= 0 && u && !u.startsWith('data:')) { pins[pi].image = u; savePins(pins); }
+    }); }, 8000);
+  });
 }
 
 // ---- AI playlists: describe it, a local model (Ollama) picks songs, Amplite finds them on Spotify ----
@@ -3110,6 +3135,7 @@ function bindCtx() {
       { icon: 'pin', label: pinned ? 'Unpin from sidebar' : 'Pin to sidebar', run: () => togglePin(o) },
       ...(o.type === 'playlist' && plFromSidebar(o.id)?.own ? ['-',
         { icon: 'edit', label: 'Rename…', run: () => openPlDialog(plFromSidebar(o.id)) },
+        { icon: 'edit', label: 'Change cover…', run: () => navigate('playlist', o.id).then(() => S.pl?.id === o.id && openCoverMaker()) },
         { icon: 'x', label: 'Delete…', run: () => { openPlDialog(plFromSidebar(o.id)); $('#plDelete').click(); } }] : []),
     ]);
   });
@@ -3481,6 +3507,7 @@ function bind() {
     const rb = e.target.closest('[data-rec-add], [data-rec-play], [data-rec-queue]');
     if (rb) { recAction(rb); return; }
     if (e.target.closest('[data-edit-pl]')) { openPlDialog(S.pl); return; }
+    if (e.target.closest('[data-cover-edit]')) { openCoverMaker(); return; }
     const pt = e.target.closest('[data-pl-tools]'); if (pt) { playlistTools(e); return; }
     const rm = e.target.closest('[data-rm]');
     if (rm) { e.stopPropagation(); removeRow(rm.closest('.trow')); return; }
