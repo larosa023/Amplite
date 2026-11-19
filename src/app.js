@@ -32,6 +32,9 @@ const THEMES = [
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Theme colors are registered CSS properties, so the browser hands them back as rgb(); most consumers want #rrggbb.
+const cssHex = v => { v = String(v || '').trim(); const m = /^rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/i.exec(v); return m ? '#' + m.slice(1, 4).map(n => (+n).toString(16).padStart(2, '0')).join('') : v; };
+const themeColor = k => cssHex(getComputedStyle(document.documentElement).getPropertyValue('--' + k));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const stripHtml = s => s ? new DOMParser().parseFromString(s, 'text/html').body.textContent : '';
 const fmt = (ms, pad) => {
@@ -820,6 +823,7 @@ function updatePlayerUI() {
     if (D.tab === 'queue') setTimeout(renderQueue, 400);
     if (D.tab === 'info') setTimeout(renderInfo, 300);
     if (FS.open) fsTrack();
+    if (S.themeId === 'art') artTheme();
     if (CFG.amp.plOpen) setTimeout(renderAmpPl, PLW.tab === 'queue' ? 500 : 0);
   }
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
@@ -862,7 +866,7 @@ function tickBar() {
 // Volume, accent and EQ state for local apps (Stream Deck plugin, Mantel). Only sent when they change.
 function sendExtra() {
   if (!IS_APP) return;
-  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const accent = themeColor('accent');
   const eq = { available: eqAvailable(), on: !!CFG.eq.enabled, preset: CFG.eq.preset || 'custom' };
   const key = Math.round(S.volume * 100) + accent + JSON.stringify(eq) + (S.liked ? 'L' : '');
   if (key === S.extraKey) return; S.extraKey = key;
@@ -935,7 +939,12 @@ async function viewLibrary(el, _arg, alive) {
   $('#libGrid').addEventListener('click', e => { if (e.target.closest('[data-allow-login]')) login(); });
   el.querySelector('.lib-ctl').addEventListener('click', e => { const b = e.target.closest('[data-libtab]'); if (b && b.dataset.libtab !== tab) { store.set('libTab', b.dataset.libtab); navigate('library', '', false); } });
 }
-const VIEWS = { discover: viewDiscover, releases: viewReleases, library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
+const VIEWS = { timeline: async (el, _a, alive) => (await import('./timeline.js')).viewTimeline(el, {
+    histItems, pool, resolveRec, playUris, api, toast, esc, svg, store, navigate, needsEditPermission, refreshPlaylists,
+    forgetHistory: () => { HC.at = 0; HC.items = []; },
+    searchFor: q => { $('#searchInput').value = q; navigate('search'); } }, alive), health: async (el, arg) => (await import('./health.js')).viewHealth(el, {
+    api, pageAll, norm, img, findDuplicates, editablePlaylists, addToPlaylist, removeFromPlaylist, rewritePlaylist, needsEditPermission,
+    toast, esc, svg, store, rateLimited, recKey, sameArtist, since: t => sinceStr(t) }, arg), discover: viewDiscover, releases: viewReleases, library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
 let navToken = 0;
 
 async function navigate(name, arg = '', push = true) {
@@ -1627,7 +1636,7 @@ async function nrPlayAll() {
 // Spotify no longer gives apps an artist's top tracks, related artists or follower counts, so the
 // page is built from: Spotify (profile, releases, popular songs via search), Last.fm (bio, listeners,
 // your scrobbles, tags, similar artists — when a key is set) and your own Amplite history.
-const ART = { similar: null };
+const ARTH = { similar: null };
 const fmtNum = n => n >= 1e9 ? (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
 function needsScope(e, word, what) {
   if (e?.status !== 401 && e?.status !== 403) return false;
@@ -1684,7 +1693,7 @@ async function artistHistory(name) {
 }
 // Spotify artist for a Last.fm name (photo + id), remembered for 30 days.
 async function spotifyArtistByName(name) {
-  const m = (ART.similar ??= store.get('simartists', {}) || {}), k = recKey(name, '');
+  const m = (ARTH.similar ??= store.get('simartists', {}) || {}), k = recKey(name, '');
   if (m[k] && Date.now() - m[k].at < 30 * 864e5) return m[k].id ? m[k] : null;
   let out = { at: Date.now() };
   try {
@@ -2289,6 +2298,7 @@ function playlistTools(e) {
     ]), 0) });
     items.push('-');
   }
+  if (ed) items.push({ icon: 'check', label: 'Check for songs that won’t play…', run: () => navigate('health', pl.id) });
   if (pl?.own && IS_APP) items.push({ icon: 'edit', label: 'Change cover…', run: openCoverMaker });
   if (IS_APP) items.push({ icon: 'share', label: 'Export as spreadsheet (CSV)…', run: exportPlaylist });
   showCtx(e, items);
@@ -3058,7 +3068,7 @@ function deskLyricsTick() {
 }
 function applyDeskLyrics() {
   if (!IS_APP) return;
-  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const accent = themeColor('accent');
   window.amplite.deskLyricsConfig({
     on: !!CFG.ui.deskLyrics, locked: !!CFG.ui.dlLocked, size: CFG.ui.dlSize, look: CFG.ui.dlLook, next: CFG.ui.dlNext, karaoke: CFG.ui.dlKaraoke,
     accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '', font: getComputedStyle(document.body).fontFamily,
@@ -3144,23 +3154,147 @@ function bindCtx() {
 }
 
 /* ---------------- themes ---------------- */
-function applyTheme(id) {
-  if (!THEMES.some(t => t[0] === id)) id = 'midnight';
-  document.documentElement.dataset.theme = id;
-  if (S.ampWin) S.ampWin.document.documentElement.dataset.theme = id;
-  store.set('theme', id);
+// Built-in themes live in styles.css. Custom themes (made in the theme maker or imported) and the
+// "From album art" theme are written into one <style> element as :root[data-theme="custom"] rules,
+// so they layer exactly like the built-in ones and the custom accent color still works on top.
+const THEME_KEYS = ['bg', 'panel', 'elev', 'hover', 'border', 'text', 'muted', 'accent', 'on-accent', 'amp-lcd', 'amp-lcd-text', 'viz-lo', 'viz-mid', 'viz-hi'];
+const FONTS = [['', 'Segoe UI (default)'], ['"Bahnschrift", "Segoe UI", sans-serif', 'Bahnschrift'], ['"Trebuchet MS", "Segoe UI", sans-serif', 'Trebuchet'], ['Verdana, "Segoe UI", sans-serif', 'Verdana'],
+  ['Georgia, "Times New Roman", serif', 'Georgia (serif)'], ['"Cascadia Code", "Cascadia Mono", Consolas, monospace', 'Cascadia (mono)'], ['"Comic Sans MS", "Segoe UI", sans-serif', 'Comic Sans']];
+const customThemes = () => (store.get('customThemes', []) || []).filter(t => t?.id && t.vars);
+const allThemes = () => [['art', 'From album art'], ...THEMES, ...customThemes().map(t => [t.id, t.name || 'My theme'])];
+const isHex = v => /^#[0-9a-f]{6}$/i.test(v || '');
+const hexRgb = h => { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
+const rgbHex = (r, g, b) => '#' + [r, g, b].map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+const mixHex = (a, b, t) => { const x = hexRgb(a), y = hexRgb(b); return rgbHex(...x.map((v, i) => v + (y[i] - v) * t)); };
+const lum = h => { const [r, g, b] = hexRgb(h).map(c => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+function hsl2hex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return rgbHex(f(0) * 255, f(8) * 255, f(4) * 255);
+}
+function hex2hsl(hex) {
+  const [r, g, b] = hexRgb(hex).map(v => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l * 100];
+  const s = d / (1 - Math.abs(2 * l - 1)), h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s * 100, l * 100];
+}
+// Fill in everything a theme needs from the few colors you pick (background, surface, text, accent).
+function deriveTheme(v) {
+  const dark = lum(v.bg) < 0.35, o = { ...v };
+  o.panel ||= mixHex(v.bg, v.text, dark ? 0.04 : 0.03);
+  o.elev ||= mixHex(o.panel, v.text, dark ? 0.06 : 0.05);
+  o.hover ||= mixHex(o.panel, v.text, dark ? 0.12 : 0.09);
+  o.border ||= mixHex(o.panel, v.text, dark ? 0.1 : 0.12);
+  o.muted ||= mixHex(v.text, v.bg, 0.42);
+  o['on-accent'] = onAccent(v.accent);
+  o['amp-lcd'] ||= dark ? mixHex(v.bg, '#000000', 0.45) : mixHex(v.text, '#000000', 0.6);
+  o['amp-lcd-text'] ||= v.accent;
+  o['viz-lo'] ||= v.accent;
+  o['viz-mid'] ||= hsl2hex((hex2hsl(v.accent)[0] + 40) % 360, Math.max(55, hex2hsl(v.accent)[1]), 62);
+  o['viz-hi'] ||= hsl2hex((hex2hsl(v.accent)[0] + 90) % 360, Math.max(60, hex2hsl(v.accent)[1]), 66);
+  return o;
+}
+function themeCss(vars, font, square) {
+  const body = THEME_KEYS.filter(k => isHex(vars[k])).map(k => `--${k}:${vars[k]};`).join('') + (font ? `--font-ui:${font};` : '');
+  return `:root[data-theme="custom"]{${body}}` + (square ? `:root[data-theme="custom"]{--corner:0}` : '');
+}
+function setThemeStyle(css) {
+  for (const d of [document, S.ampWin?.document].filter(Boolean)) {
+    let el = d.getElementById('themeVars');
+    if (!el) { el = d.createElement('style'); el.id = 'themeVars'; d.head.append(el); }
+    if (el.textContent !== css) el.textContent = css;
+  }
+}
+const ARTT = { vars: null, key: '' };
+function applyTheme(id, { save = true } = {}) {
+  const custom = customThemes().find(t => t.id === id);
+  if (id !== 'art' && !custom && !THEMES.some(t => t[0] === id)) id = 'midnight';
+  S.themeId = id;
+  const root = document.documentElement;
+  root.classList.toggle('square', !!custom?.square);
+  if (id !== 'art') root.classList.remove('theme-glide');
+  if (custom) { setThemeStyle(themeCss(deriveTheme(custom.vars), custom.font, custom.square)); root.dataset.theme = 'custom'; }
+  else if (id === 'art') { setThemeStyle(themeCss(ARTT.vars || deriveTheme({ bg: '#0d0f14', text: '#eef0f4', accent: '#7c9cff' }))); root.dataset.theme = 'custom'; artTheme(); }
+  else { setThemeStyle(''); root.dataset.theme = id; }
+  if (S.ampWin) S.ampWin.document.documentElement.dataset.theme = root.dataset.theme;
+  if (save) store.set('theme', id);
   S.vizGrad = null;
   $$('.theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === id));
   applyAccent();
-  if (IS_APP) {
-    const cs = getComputedStyle(document.documentElement);
-    window.amplite.setTheme({ bg: cs.getPropertyValue('--bg').trim(), text: cs.getPropertyValue('--text').trim() });
-  }
+  themeToShell();
+}
+function themeToShell() {
+  if (!IS_APP) return;
+  window.amplite.setTheme({ bg: themeColor('bg'), text: themeColor('text') });
+}
+// "From album art": a dark theme tinted by the cover's main color, with its most vivid color as the
+// accent. It glides to the new colors when the song changes (see @property in styles.css).
+async function artTheme() {
+  if (S.themeId !== 'art') return;
+  const url = S.now?.album?.image; if (!url || !IS_APP) return;
+  if (url === ARTT.key) return;
+  ARTT.key = url;
+  try {
+    const data = await window.amplite.imageData(url); if (!data || ARTT.key !== url || S.themeId !== 'art') return;
+    const im = new Image(); im.src = data; await im.decode();
+    const c = document.createElement('canvas'); c.width = c.height = 24; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, 24, 24);
+    const d = x.getImageData(0, 0, 24, 24).data, bins = new Map();
+    for (let i = 0; i < d.length; i += 4) {
+      const [h, s, l] = hex2hsl(rgbHex(d[i], d[i + 1], d[i + 2])), b = Math.round(h / 20) % 18;
+      const e = bins.get(b) || { n: 0, h: 0, s: 0, vivid: 0, vh: 0, vs: 0, vl: 0 };
+      const w = (s / 100) * (1 - Math.abs(l - 50) / 60);
+      e.n += 0.2 + w; e.h += h; e.s += s;
+      if (w > e.vivid) { e.vivid = w; e.vh = h; e.vs = s; e.vl = l; }
+      bins.set(b, e);
+    }
+    const ranked = [...bins.values()].sort((a, b) => b.n - a.n), main = ranked[0];
+    const pop = [...bins.values()].sort((a, b) => b.vivid * Math.sqrt(b.n) - a.vivid * Math.sqrt(a.n))[0] || main;
+    const hue = main.vh || main.h / main.n, sat = Math.min(60, (main.vs || 30));
+    const bg = hsl2hex(hue, sat * 0.55, 7), text = hsl2hex(hue, 15, 94);
+    const accent = pop.vivid > 0.12 ? hsl2hex(pop.vh, Math.max(55, pop.vs), Math.max(58, Math.min(70, pop.vl + 15))) : hsl2hex(hue, 45, 68);
+    ARTT.vars = deriveTheme({ bg, text, accent, panel: hsl2hex(hue, sat * 0.5, 10), elev: hsl2hex(hue, sat * 0.45, 14), hover: hsl2hex(hue, sat * 0.42, 19), border: hsl2hex(hue, sat * 0.4, 18), muted: hsl2hex(hue, 14, 64) });
+    if (S.themeId !== 'art') return;
+    document.documentElement.classList.add('theme-glide');
+    setThemeStyle(themeCss(ARTT.vars));
+    S.vizGrad = null; applyAccent(); themeToShell();
+  } catch { ARTT.key = ''; }
+}
+// Day and night themes: switch at the times you set. Picking a theme by hand sticks until the next switch.
+function autoTheme() {
+  const a = CFG.ui.themeAuto; clearTimeout(S.autoThemeT);
+  if (!a?.on) { S.autoLast = null; return; }
+  const mins = s => { const [h, m] = String(s || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+  const d = new Date(), now = d.getHours() * 60 + d.getMinutes(), day = mins(a.dayAt || '07:00'), night = mins(a.nightAt || '19:00');
+  const isDay = day < night ? now >= day && now < night : now >= day || now < night;
+  const want = isDay ? a.day : a.night;
+  if (want && want !== S.autoLast) { S.autoLast = want; if (want !== S.themeId) applyTheme(want); }
+  S.autoThemeT = setTimeout(autoTheme, 60000 - d.getSeconds() * 1000 + 200);
+}
+function themeOpt([id, name]) {
+  const c = customThemes().find(t => t.id === id), v = c ? deriveTheme(c.vars) : null;
+  const sw = id === 'art' ? '<span class="sw sw-art"><i></i><i></i><i></i></span>'
+    : v ? `<span class="sw"><i style="background:${v.panel};border-color:${v.border}"></i><i style="background:${v.accent}"></i><i style="background:${v['viz-mid']}"></i></span>`
+    : '<span class="sw"><i></i><i></i><i></i></span>';
+  return `<button class="theme-opt${c ? ' mine' : ''}" data-theme="${esc(id)}" ${v ? `style="background:${v.bg};color:${v.text};border-color:${v.border}"` : ''}>${sw}${esc(name)}${c ? `<span class="theme-edit" data-theme-edit="${esc(id)}" title="Edit">${svg('edit')}</span>` : ''}</button>`;
 }
 function renderThemes() {
-  $('#themeList').innerHTML = THEMES.map(([id, name]) =>
-    `<button class="theme-opt" data-theme="${id}"><span class="sw"><i></i><i></i><i></i></span>${name}</button>`).join('');
-  applyTheme(store.get('theme', 'midnight'));
+  const html = allThemes().map(themeOpt).join('')
+    + `<button class="theme-opt theme-new" data-theme-new>${svg('plus')}New theme</button><button class="theme-opt theme-new" data-theme-import>${svg('listadd')}Import…</button>`;
+  $('#themeList').innerHTML = html;
+  if ($('#setThemes')) $('#setThemes').innerHTML = html;
+  applyTheme(S.themeId || store.get('theme', 'midnight'), { save: false });
+}
+async function themeMaker(id) {
+  $('#themePanel').classList.add('hidden');
+  const m = await import('./thememaker.js');
+  m.openThemeMaker({ store, esc, svg, toast, deriveTheme, themeCss, setThemeStyle, applyTheme, renderThemes, customThemes, FONTS, THEME_KEYS, current: () => S.themeId, saveText: IS_APP ? window.amplite.saveText : null }, id);
+}
+function themeClick(e) {
+  const ed = e.target.closest('[data-theme-edit]'); if (ed) { e.stopPropagation(); themeMaker(ed.dataset.themeEdit); return true; }
+  if (e.target.closest('[data-theme-new]')) { themeMaker(null); return true; }
+  if (e.target.closest('[data-theme-import]')) { import('./thememaker.js').then(m => m.importTheme({ store, toast, applyTheme, renderThemes, THEME_KEYS })); return true; }
+  const b = e.target.closest('.theme-opt[data-theme]'); if (b) { applyTheme(b.dataset.theme); return true; }
+  return false;
 }
 
 /* ---------------- Mini Amp ---------------- */
@@ -3482,7 +3616,7 @@ function bind() {
   // Theme + user popovers
   $('#themeBtn').onclick = e => { e.stopPropagation(); $('#themePanel').classList.toggle('hidden'); $('#userMenu').classList.add('hidden'); };
   $('#userBtn').onclick = e => { e.stopPropagation(); $('#userMenu').classList.toggle('hidden'); $('#themePanel').classList.add('hidden'); };
-  $('#themeList').onclick = e => { const b = e.target.closest('.theme-opt'); if (b) applyTheme(b.dataset.theme); };
+  $('#themeList').onclick = themeClick;
   $('#themePanel').addEventListener('click', e => e.stopPropagation());
 
   // Search
@@ -3635,6 +3769,7 @@ function applyUI() {
   applyAccent();
   if (IS_APP && S.remoteOn !== !!CFG.ui.remote) { S.remoteOn = !!CFG.ui.remote; applyRemote().then(i => { if (!$('#settings').classList.contains('hidden')) renderRemote(i); }); }
   applyDeskLyrics();
+  autoTheme();
   if (IS_APP) window.amplite.setPrefs({ closeToTray: CFG.ui.closeToTray, startup: CFG.ui.startup, hwAccel: CFG.ui.hwAccel, taskbar: CFG.ui.taskbar, discord: CFG.ui.discord, discordAppId: CFG.ui.discordAppId });
   $('#app').classList.toggle('side-min', !!CFG.ui.sideMin);
   document.documentElement.classList.toggle('lite', !!CFG.ui.lite);
@@ -3679,7 +3814,9 @@ function settingsHTML() {
         + sw('ui.dlNext', 'Show the next line', 'Smaller, underneath')) : '')
       + grp('Performance', sw('ui.lite', 'Lite mode', 'Turns off animations, blur and shadows to save CPU/GPU')
         + (IS_APP ? sw('ui.hwAccel', 'Hardware acceleration', 'Turning it off can lower memory use on PCs with weak graphics; uses a bit more CPU (takes effect after restart)') : ''))
-      + grp('Theme', `<div class="theme-list" id="setThemes"></div>`),
+      + grp('Theme', `<div class="theme-list" id="setThemes"></div>`
+        + `<div class="set-row"><div class="lbl">Day and night themes<small>Switch themes automatically at the times you pick</small></div><label class="switch ctl"><input type="checkbox" id="taOn" aria-label="Day and night themes"></label></div>
+        <div class="set-row ta-row" id="taRow"><div class="lbl">From <input type="time" id="taDayAt"> use <select id="taDay"></select><br>From <input type="time" id="taNightAt"> use <select id="taNight"></select></div></div>`),
     amp: `<div class="amp-preview" id="ampPreview"><p class="muted" id="ampPreviewNote" style="font-size:12px"></p></div>`
       + grp('Skin', `<div class="skins">${skinBtns}</div><div class="colors" id="ampColors" ${CFG.amp.skin === 'custom' ? '' : 'hidden'}>${colorInputs}</div>`)
       + grp('Size & shape',
@@ -3747,7 +3884,13 @@ function syncControls() {
   $$('.skin', root).forEach(b => b.classList.toggle('on', b.dataset.skin === CFG.amp.skin));
   const cols = $('#ampColors'); if (cols) cols.hidden = CFG.amp.skin !== 'custom';
   $$('[data-color]', root).forEach(i => { i.value = CFG.amp.colors[i.dataset.color]; });
-  $$('#setThemes .theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === document.documentElement.dataset.theme));
+  $$('#setThemes .theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === S.themeId));
+  const ta = CFG.ui.themeAuto || {}, opts = allThemes().map(([id, n]) => `<option value="${esc(id)}">${esc(n)}</option>`).join('');
+  if ($('#taOn')) {
+    $('#taOn').checked = !!ta.on; $('#taRow').hidden = !ta.on;
+    for (const [sel, v, def] of [['#taDay', ta.day, 'snow'], ['#taNight', ta.night, 'midnight']]) { const el = $(sel); if (el.dataset.opts !== opts) { el.innerHTML = opts; el.dataset.opts = opts; } el.value = v || def; }
+    $('#taDayAt').value = ta.dayAt || '07:00'; $('#taNightAt').value = ta.nightAt || '19:00';
+  }
   $$('.acc', root).forEach(b => b.classList.toggle('on', b.dataset.accent.toLowerCase() === (CFG.ui.accent || '').toLowerCase()));
   const pick = $('#accentPick'); if (pick) pick.value = CFG.ui.accent || '#7c9cff';
 }
@@ -3864,6 +4007,12 @@ function closeSettings() {
 }
 
 function bindSettings(root) {
+  root.addEventListener('change', e => {
+    if (!e.target.closest('#taOn, #taRow')) return;
+    const cur = { day: 'snow', night: 'midnight', dayAt: '07:00', nightAt: '19:00', ...(CFG.ui.themeAuto || {}) };
+    const v = { ...cur, on: $('#taOn').checked, day: $('#taDay').value || cur.day, night: $('#taNight').value || cur.night, dayAt: $('#taDayAt').value || cur.dayAt, nightAt: $('#taNightAt').value || cur.nightAt };
+    S.autoLast = null; setK('ui.themeAuto', v); syncControls();
+  });
   root.addEventListener('click', e => {
     const segBtn = e.target.closest('.seg button');
     if (segBtn) { const s = segBtn.parentElement; setK(s.dataset.k, s.dataset.type === 'num' ? +segBtn.dataset.v : segBtn.dataset.v); return; }
@@ -3877,8 +4026,7 @@ function bindSettings(root) {
     }
     const ac = e.target.closest('[data-accent]');
     if (ac) { setK('ui.accent', ac.dataset.accent); applyAmp(); return; }
-    const th = e.target.closest('#setThemes .theme-opt');
-    if (th) { applyTheme(th.dataset.theme); syncControls(); applyAmp(); return; }
+    if (e.target.closest('#setThemes') && themeClick(e)) { syncControls(); applyAmp(); return; }
     if (e.target.closest('#ampReset')) { CFG.amp = clone(AMP_DEFAULTS); store.set('cfg', CFG); applyAmp(); syncControls(); toast('Mini amp reset'); return; }
     if (e.target.closest('#engRestart')) { window.amplite.engineRestart(); toast('Restarting audio engine…'); return; }
     if (e.target.closest('#engRelink')) { window.amplite.engineRestart({ forget: true }); toast('Re-linking — approve Amplite in your browser.'); return; }

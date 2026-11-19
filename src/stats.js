@@ -1,3 +1,5 @@
+// Theme colors come back from the browser as rgb(); this turns them into #rrggbb.
+const hexOf = v => { v = String(v || '').trim(); const m = /^rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/i.exec(v); return m ? '#' + m.slice(1, 4).map(n => (+n).toString(16).padStart(2, '0')).join('') : v; };
 // Amplite Stats — "Wrapped, but always": your listening from Amplite's own history (kept on this PC),
 // optionally topped up with your Last.fm scrobbles. Loaded only when the Stats page opens.
 
@@ -53,30 +55,36 @@ async function seedFromSpotify() {
     if (recs.length) { await window.amplite.history('append', { items: recs }); await loadHistory(true); }
   } catch {}
 }
+// Pull your whole Last.fm history (up to 200,000 scrobbles), skipping plays Amplite already has.
+// Shared with the Timeline page.
+export async function importScrobbles({ store, alive = () => true, say = () => {} }) {
+  await loadHistory(true);
+  const have = indexByTitle(H.items);
+  let page = 1, pages = 1, added = 0, seen = 0, total = 0;
+  do {
+    const r = await window.amplite.history('lastfm', { page });
+    if (!r.ok) throw new Error(r.error);
+    pages = Math.min(r.pages, 1000); total = r.total; seen += r.tracks.length;
+    const fresh = r.tracks.filter(x => !dupe(have, x));
+    fresh.forEach(x => { const k = keyOf(x.title); (have.get(k) || have.set(k, []).get(k)).push(x.ts); });
+    if (fresh.length) await window.amplite.history('append', { items: fresh });
+    added += fresh.length;
+    say(`Importing… ${seen.toLocaleString()} of ${Math.min(total, 200000).toLocaleString()} scrobbles`);
+    page++;
+  } while (page <= pages && alive());
+  store.set('statsLastfmImported', Date.now());
+  await loadHistory(true);
+  return added;
+}
 async function importLastfm(btn) {
   if (busy) return; busy = true;
   const msg = document.getElementById('stImportMsg');
   const say = t => { if (msg) msg.textContent = t; };
   btn.disabled = true;
   try {
-    await loadHistory(true);
-    const have = indexByTitle(H.items);
-    let page = 1, pages = 1, added = 0, seen = 0, total = 0;
-    do {
-      const r = await window.amplite.history('lastfm', { page });
-      if (!r.ok) throw new Error(r.error);
-      pages = Math.min(r.pages, 50); total = r.total; seen += r.tracks.length;
-      const fresh = r.tracks.filter(x => !dupe(have, x));
-      fresh.forEach(x => { const k = keyOf(x.title); (have.get(k) || have.set(k, []).get(k)).push(x.ts); });
-      if (fresh.length) await window.amplite.history('append', { items: fresh });
-      added += fresh.length;
-      say(`Importing… ${seen.toLocaleString()} of ${Math.min(total, 10000).toLocaleString()} scrobbles`);
-      page++;
-    } while (page <= pages && C.alive());
-    C.store.set('statsLastfmImported', Date.now());
+    const added = await importScrobbles({ store: C.store, alive: C.alive, say });
     importMsg = added ? `Imported ${added.toLocaleString()} plays from Last.fm.` : 'Already up to date — nothing new on Last.fm.';
     say(importMsg);
-    await loadHistory(true);
     if (C.alive()) render(true);
   } catch (e) { say('Couldn’t import: ' + e.message); }
   btn.disabled = false; busy = false;
@@ -333,7 +341,7 @@ async function drawCard(d, g) {
   const W = 1080, H = 1350, P = 80, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const x = cv.getContext('2d');
   const css = getComputedStyle(document.documentElement);
-  const accent = /^#[0-9a-f]{6}$/i.test(css.getPropertyValue('--accent').trim()) ? css.getPropertyValue('--accent').trim() : '#1db954';
+  const accent = /^#[0-9a-f]{6}$/i.test(hexOf(css.getPropertyValue('--accent'))) ? hexOf(css.getPropertyValue('--accent')) : '#1db954';
   const font = getComputedStyle(document.body).fontFamily || 'Segoe UI, sans-serif';
   const F = (w, px) => `${w} ${px}px ${font}`;
   const ink = '#ffffff', muted = 'rgba(255,255,255,.62)', faint = 'rgba(255,255,255,.08)';
@@ -428,7 +436,7 @@ function rangeTabs() {
   return `<div class="st-head-ctl"><button class="btn st-share-btn" data-st-share title="Make an image of these stats to share">${C.svg('share')} Share</button><div class="seg st-range" role="tablist">${Object.entries(RANGES).map(([k, v]) => `<button class="${k === range ? 'on' : ''}" data-st-range="${k}">${v.label}</button>`).join('')}</div></div>`;
 }
 function isLight() {
-  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  const bg = hexOf(getComputedStyle(document.documentElement).getPropertyValue('--bg'));
   const m = /^#?([0-9a-f]{6})$/i.exec(bg); if (!m) return false;
   const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.6;
