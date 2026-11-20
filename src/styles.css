@@ -159,7 +159,11 @@ img { display:block; }
 .nav-item:hover { color:var(--text); }
 .nav-item.active { color:var(--text); background:var(--elev); }
 .side-label { margin:20px 12px 8px; font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); font-weight:700; }
-.playlists { overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:2px; }
+.playlists { display:flex; flex-direction:column; gap:2px; }
+/* Pinned items and playlists scroll together under the menu, so nothing gets squeezed out on short windows. */
+.side-scroll { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; margin:0 -6px; padding:0 6px; scrollbar-width:thin; overscroll-behavior:contain; }
+.side-scroll .side-head { position:sticky; top:0; z-index:2; background:var(--panel); }
+.app.side-min .side-scroll { scrollbar-width:none; } .app.side-min .side-scroll::-webkit-scrollbar { width:0; }
 .pl-item { display:flex; align-items:center; gap:12px; padding:6px 8px; border-radius:8px; text-align:left; min-width:0; }
 .pl-item:hover { background:var(--hover); }
 .pl-item.active { background:var(--elev); }
@@ -536,8 +540,6 @@ kbd { font:11px var(--font-mono); border:1px solid var(--border); border-bottom-
 .app.side-min .side-toggle .ic { transform:scaleX(-1); }
 .app.side-min .nav-item, .app.side-min .pl-item { justify-content:center; }
 .app.side-min .side-label + .playlists { margin-top:12px; }
-.app.side-min .playlists { scrollbar-width:none; }
-.app.side-min .playlists::-webkit-scrollbar { width:0; }
 
 /* ============ Settings ============ */
 .modal { position:fixed; inset:0; z-index:150; display:grid; place-items:center; padding:24px; background:color-mix(in srgb, #000 55%, transparent); }

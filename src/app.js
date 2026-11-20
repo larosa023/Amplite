@@ -650,7 +650,10 @@ function initEngine() {
 const isLocal = () => S.player && S.now?.source === 'sdk';
 const fail = e => {
   if (e.status === 404) toast(useEngine() ? 'Audio engine isn’t connected yet — give it a second and try again.' : 'No active device. Open Spotify somewhere, or use Chrome/Edge with Premium.');
-  else if (e.status === 403) toast('Spotify refused that (Premium is required for playback control).');
+  // Spotify answers 403 for lots of things (a song blocked in your country, a command the device can't do
+  // right now …); it's only about Premium when Spotify says so.
+  else if (e.status === 403 && (e.reason === 'PREMIUM_REQUIRED' || (S.me?.product && S.me.product !== 'premium'))) toast('Spotify refused that: playback control needs Spotify Premium.');
+  else if (e.status === 403) toast(`Spotify refused that${e.message && !/^Spotify error/.test(e.message) ? `: ${e.message.replace(/^Player command failed:\s*/i, '')}` : ''}. Try again, or pick another song.`);
   else toast(e.message);
 };
 
@@ -661,10 +664,26 @@ async function startPlayback(body) {
   const dev = await target();
   if (mySeq !== S.playSeq) return; // a newer click happened while we waited for the device
   if (useEngine() && !dev) return;
+  if (body.uris) {
+    // Only real song/episode IDs, each once (a duplicate or a stray ID makes Spotify refuse the whole list).
+    const seen = new Set(), first = body.uris[body.offset?.position || 0];
+    body = { ...body, uris: body.uris.filter(u => /^spotify:(track|episode):[A-Za-z0-9]+$/.test(u) && !seen.has(u) && seen.add(u)) };
+    if (body.offset && 'position' in body.offset) body.offset = { position: Math.max(0, body.uris.indexOf(first)) };
+  }
   try {
     await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body });
     pollSoon(600); pollSoon(1800);
   } catch (e) {
+    // A long list Spotify won't take (one song in it is blocked, or it's too much for the device):
+    // try a shorter one starting at the same song before giving up.
+    if (e.status === 403 && e.reason !== 'PREMIUM_REQUIRED' && body.uris?.length > 1) {
+      const at = body.offset?.position || 0;
+      for (const n of [50, 20, 1]) {
+        if (body.uris.length - at <= n && n !== 1) continue;
+        try { await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body: { uris: body.uris.slice(at, at + n) } }); pollSoon(600); pollSoon(1800); return; }
+        catch (e2) { if (e2.status !== 403) break; }
+      }
+    }
     if (e.status === 404 && useEngine()) {
       // Engine restarted and got a new device id: look it up again and retry once.
       S.engineId = null;
@@ -1712,7 +1731,7 @@ async function viewArtist(el, id, alive) {
   // Releases (each group separately, newest first) and popular songs in parallel.
   const [groups, popular] = await Promise.all([
     Promise.all(GROUPS.map(([g]) => pageAll(`/artists/${id}/albums`, { include_groups: g, limit: 10 }, g === 'appears_on' ? 30 : 100).catch(() => []))),
-    api('/search', { query: { q: `artist:"${ar.name.replace(/"/g, '')}"`, type: 'track', limit: 10 } })
+    api('/search', { query: { q: `artist:"${ar.name.replace(/"/g, '')}"`, type: 'track', market: 'from_token', limit: 10 } })
       .then(d => (d.tracks?.items || []).map(norm).filter(t => t && t.artists.some(a => a.id === id))).catch(() => []),
   ]);
   if (!alive()) return;
@@ -1781,7 +1800,7 @@ async function viewArtist(el, id, alive) {
   el.querySelector('[data-art-more]')?.addEventListener('click', async e => {
     const b = e.currentTarget; b.disabled = true;
     try {
-      const d = await api('/search', { query: { q: `artist:"${ar.name.replace(/"/g, '')}"`, type: 'track', limit: 10, offset: more } }); more += 10;
+      const d = await api('/search', { query: { q: `artist:"${ar.name.replace(/"/g, '')}"`, type: 'track', market: 'from_token', limit: 10, offset: more } }); more += 10;
       const L = S.lists[0], have = new Set(L.orig.map(t => t.uri));
       const add = (d.tracks?.items || []).map(norm).filter(t => t && t.artists.some(a => a.id === id) && !have.has(t.uri));
       add.forEach(t => appendToOpenList(t));
@@ -2594,11 +2613,11 @@ function recMap() { REC.map ??= store.get('recmap', {}) || {}; return REC.map; }
 function recMapSave() { const m = recMap(), k = Object.keys(m); if (k.length > 600) k.slice(0, k.length - 500).forEach(x => delete m[x]); clearTimeout(REC.saveT); REC.saveT = setTimeout(() => store.set('recmap', m), 1000); }
 const slim = t => t && { uri: t.uri, id: t.id, name: t.name, artists: t.artists.map(a => ({ name: a.name, id: a.id })), album: t.album, duration: t.duration, playable: t.playable };
 async function resolveRec(artist, title) {
-  const k = recKey(artist, title), m = recMap();
+  const k = 'm:' + recKey(artist, title), m = recMap(); // 'm:' = looked up for your country
   if (k in m) return m[k];
   let hit = null;
   try {
-    const d = await api('/search', { bg: true, query: { q: `track:"${title.replace(/"/g, '')}" artist:"${artist.replace(/"/g, '')}"`, type: 'track', limit: 3 } });
+    const d = await api('/search', { bg: true, query: { q: `track:"${title.replace(/"/g, '')}" artist:"${artist.replace(/"/g, '')}"`, type: 'track', market: 'from_token', limit: 3 } });
     const items = (d.tracks?.items || []).map(norm).filter(Boolean);
     hit = items.find(t => t.playable && t.artists.some(a => sameArtist(a.name, artist))) || null;
   } catch (e) { return null; } // busy / rate-limited: try again another time (not remembered as "no match")
@@ -2607,7 +2626,7 @@ async function resolveRec(artist, title) {
 }
 async function artistPicks(name, have, n = 3, offset = 0) {
   try {
-    const d = await api('/search', { bg: true, query: { q: `artist:"${name.replace(/"/g, '')}"`, type: 'track', limit: 10, offset } });
+    const d = await api('/search', { bg: true, query: { q: `artist:"${name.replace(/"/g, '')}"`, type: 'track', market: 'from_token', limit: 10, offset } });
     return (d.tracks?.items || []).map(norm).filter(t => t && t.playable && t.artists.some(a => sameArtist(a.name, name)) && !have(t)).slice(0, n);
   } catch { return []; }
 }
