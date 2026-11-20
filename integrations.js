@@ -182,6 +182,24 @@ async function lfmPublic(method, params) {
   if (j.error) throw new Error(j.message || 'Last.fm error ' + j.error);
   return j;
 }
+// Friends (other Last.fm users): who you follow there, what they're playing, their top artists / songs.
+const lfmImg = arr => (arr || []).find(i => i.size === 'extralarge')?.['#text'] || (arr || []).at(-1)?.['#text'] || '';
+async function lfmUser(op, user, a = {}) {
+  if (op === 'friends') {
+    if (!lfm.user) return [];
+    const j = await lfmPublic('user.getFriends', { user: lfm.user, limit: '50' });
+    return (j.friends?.user || []).map(u => ({ name: u.name, real: u.realname || '', image: lfmImg(u.image) }));
+  }
+  if (op === 'info') { const j = await lfmPublic('user.getInfo', { user }); const u = j.user || {}; return { name: u.name, real: u.realname || '', image: lfmImg(u.image), plays: +u.playcount || 0, since: +u.registered?.unixtime || +u.registered?.['#text'] || 0 }; }
+  if (op === 'now') {
+    const j = await lfmPublic('user.getRecentTracks', { user, limit: '1', extended: '0' });
+    const t = [].concat(j.recenttracks?.track || [])[0]; if (!t) return null;
+    return { title: t.name, artist: t.artist?.['#text'] || t.artist?.name || '', album: t.album?.['#text'] || '', image: lfmImg(t.image), now: t['@attr']?.nowplaying === 'true', ts: +t.date?.uts || 0 };
+  }
+  if (op === 'artists') { const j = await lfmPublic('user.getTopArtists', { user, period: a.period || '12month', limit: String(Math.min(500, +a.limit || 300)) }); return (j.topartists?.artist || []).map(x => ({ name: x.name, n: +x.playcount || 0 })); }
+  if (op === 'tracks') { const j = await lfmPublic('user.getTopTracks', { user, period: a.period || '12month', limit: String(Math.min(500, +a.limit || 300)) }); return (j.toptracks?.track || []).map(x => ({ title: x.name, artist: x.artist?.name || '', n: +x.playcount || 0 })); }
+  return null;
+}
 async function lfmSimilar({ tracks = [], artists = [], limit = 25 } = {}) {
   const out = { tracks: [], artists: [] };
   await Promise.all([
@@ -325,7 +343,20 @@ function readHistory() {
   }));
 }
 function appendHistory(recs) { if (recs.length) fs.appendFileSync(file(HIST), recs.map(r => JSON.stringify(r)).join('\n') + '\n'); }
-function clearHistory() { try { fs.unlinkSync(file(HIST)); } catch {} }
+function clearHistory() { try { fs.unlinkSync(file(HIST)); } catch {} try { fs.unlinkSync(file(SKIPS)); } catch {} }
+// Skips: songs you pressed Next on early (before 30 s or half the song). Used by Stats.
+const SKIPS = 'skips.jsonl';
+function appendSkip(r) {
+  if (!r || typeof r.uri !== 'string' || !/^spotify:track:/.test(r.uri)) return;
+  const rec = { ts: Math.floor(Date.now() / 1000), uri: r.uri, title: String(r.title || '').slice(0, 200), artist: String(r.artist || '').slice(0, 200), at: Math.round(+r.at || 0), ctx: /^spotify:[a-z]+:[A-Za-z0-9:]+$/.test(r.ctx || '') ? r.ctx : '' };
+  try { fs.appendFile(file(SKIPS), JSON.stringify(rec) + '\n', () => {}); } catch {}
+}
+function readSkips() {
+  return new Promise(res => fs.readFile(file(SKIPS), 'utf8', (e, d) => {
+    if (e) return res([]);
+    const out = []; for (const l of d.split('\n')) { if (!l) continue; try { out.push(JSON.parse(l)); } catch {} } res(out);
+  }));
+}
 // Last.fm scrobble history → the same format (no Spotify IDs; artists are matched by name).
 async function lfmRecent(page = 1) {
   if (!lfm.user) throw new Error('Connect Last.fm first (Settings → Connections).');
@@ -399,8 +430,8 @@ function nowState() {
 module.exports = {
   init, configure, update, setExtra, nowState,
   discordStatus: () => discord.status, onDiscord: f => { discordListener = f; },
-  lastfm: { state: lfmState, similar: lfmSimilar, discover: lfmDiscover, artist: lfmArtist, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
-  history: { read: readHistory, append: appendHistory, clear: clearHistory, lastfmPage: lfmRecent, tags: a => lfmPublic('artist.getTopTags', { artist: a }).then(j => (j.toptags?.tag || []).slice(0, 8).map(t => ({ name: t.name, count: +t.count || 0 }))) },
+  lastfm: { state: lfmState, similar: lfmSimilar, discover: lfmDiscover, user: lfmUser, artist: lfmArtist, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
+  history: { read: readHistory, append: appendHistory, clear: clearHistory, skip: appendSkip, skips: readSkips, lastfmPage: lfmRecent, tags: a => lfmPublic('artist.getTopTags', { artist: a }).then(j => (j.toptags?.tag || []).slice(0, 8).map(t => ({ name: t.name, count: +t.count || 0 }))) },
   shutdown() { try { lfmTick(); commitPlay(held?.track || cur.track, held ? held.listened : lfm.listened, true); held = null; } catch {}
     try { if (discord.sock) { frame(1, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: crypto.randomUUID() }); discord.sock.end(); } } catch {} },
 };

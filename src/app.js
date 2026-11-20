@@ -573,24 +573,46 @@ function renderEngine() {
   el.innerHTML = `<span class="dot"></span><span>${esc(prob ? prob.msg : label)}${e?.user && !prob ? `<small class="muted"> · signed in as ${esc(e.user)}</small>` : ''}${e?.name ? `<small class="muted"> · device “${esc(e.name)}”</small>` : ''}</span>`;
 }
 
-async function copyDiagnostics() {
+// Recent problems in the app itself (script errors, failed playback), for diagnostics.
+const ERRS = [];
+const noteErr = m => { ERRS.push(`${new Date().toLocaleTimeString()} ${String(m).slice(0, 300)}`); if (ERRS.length > 40) ERRS.shift(); };
+window.addEventListener('error', e => noteErr(`error: ${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
+window.addEventListener('unhandledrejection', e => noteErr(`unhandled: ${e.reason?.message || e.reason}`));
+async function buildDiagnostics() {
   const lines = [];
   const add = (k, v) => lines.push(`${k}: ${v}`);
-  try { const i = await window.amplite?.info(); add('Amplite', i ? 'v' + i.version : 'web'); } catch {}
-  add('Platform', navigator.userAgentData?.platform || navigator.platform);
-  add('Account', `${S.me?.id} · ${S.me?.product || '?'} · ${S.me?.country || '?'}`);
+  lines.push('Amplite diagnostics · ' + new Date().toString());
+  try { const i = await window.amplite?.info(); add('Amplite', i ? `v${i.version}${i.packaged ? '' : ' (dev)'} · Electron ${i.electron} · ${i.os} · ${i.mem} MB` : 'web'); } catch {}
+  add('Window', `${innerWidth}×${innerHeight} @${devicePixelRatio}x · theme ${S.themeId}${document.documentElement.classList.contains('lite') ? ' · lite mode' : ''}`);
+  add('Account', `${S.me?.id} · ${S.me?.product || '?'} · ${S.me?.country || '?'} · own Spotify app: ${ownClientId() ? 'yes' : 'no'} · scopes: ${(store.get('token')?.scope || '?').split(' ').length}`);
   add('Engine', JSON.stringify(S.engine || null));
   add('Engine device id', S.engineId || '(not found)');
   add('Problem', accountProblem()?.msg || 'none detected');
   try { const d = await api('/me/player/devices'); add('Devices', (d?.devices || []).map(x => `${x.name} [${x.type}${x.is_active ? ', active' : ''}${x.is_restricted ? ', restricted' : ''}]`).join(' | ') || 'none'); } catch (e) { add('Devices', 'error ' + e.message); }
-  try { const p = await api('/me/player'); add('Now', p?.item ? `${p.item.name} on ${p.device?.name} (${p.is_playing ? 'playing' : 'paused'})` : 'nothing'); } catch (e) { add('Now', 'error ' + e.message); }
-  add('Settings', JSON.stringify(CFG.audio) + ` · mode=${playMode()} · engineRefused=${engineRefused()} · webBlocked=${webBlocked()} · webError=${S.webLastError || '-'} · webDevice=${S.deviceId ? 'yes' : 'no'} · spotifyApp=${S.appInstalled ? 'installed' : 'not found'}`);
+  try { const p = await api('/me/player'); add('Now', p?.item ? `${p.item.name} on ${p.device?.name} (${p.is_playing ? 'playing' : 'paused'}) · context ${p.context?.uri || 'none'}` : 'nothing'); } catch (e) { add('Now', 'error ' + e.message); }
+  add('Audio', JSON.stringify(CFG.audio) + ` · mode=${playMode()} · engineRefused=${engineRefused()} · webBlocked=${webBlocked()} · webError=${S.webLastError || '-'} · webDevice=${S.deviceId ? 'yes' : 'no'} · spotifyApp=${S.appInstalled ? 'installed' : 'not found'} · songLists=${store.get('uriBlocked') ? 'via playlist' : 'direct'}`);
   add('Spotify limits', rateLimited() ? `limited for ${Math.round((RL.until - Date.now()) / 1000)} s` : 'ok');
+  if (IS_APP) {
+    try { const l = await window.amplite.lastfm('state'); add('Last.fm', l?.state?.key ? `key set · ${l.state.user ? 'connected as ' + l.state.user : 'not connected'} · scrobbling ${l.state.on ? 'on' : 'off'}` : 'not set up'); } catch {}
+    try { add('Discord', JSON.stringify(await window.amplite.discordStatus())); } catch {}
+    try { add('History', `${(await histItems()).length.toLocaleString()} plays`); } catch {}
+  }
+  add('Settings', JSON.stringify({ ui: CFG.ui, amp: { skin: CFG.amp.skin, viz: CFG.amp.viz } }).slice(0, 1500));
   if (RL.errors.length) lines.push('--- recent Spotify errors ---', ...RL.errors);
+  if (ERRS.length) lines.push('--- recent app errors ---', ...ERRS);
   if (IS_APP) { try { lines.push('--- engine log ---', ...(await window.amplite.engineLogs())); } catch {} }
-  const text = lines.join('\n');
+  return lines.join('\n');
+}
+async function copyDiagnostics() {
+  const text = await buildDiagnostics();
   try { await navigator.clipboard.writeText(text); toast('Diagnostics copied — paste them to whoever is helping you.'); }
   catch { console.log(text); toast('Couldn’t copy automatically.'); }
+}
+async function saveDiagnostics() {
+  const text = await buildDiagnostics();
+  const d = new Date(), stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const r = await window.amplite.saveText({ name: `Amplite diagnostics ${stamp}.txt`, text, kind: 'txt' });
+  if (r?.ok) toast('Saved. Send that file to whoever is helping you (no passwords or tokens are in it).');
 }
 const audioOpts = () => ({ volume: Math.round(S.volume * 100), bitrate: CFG.audio.bitrate, normalise: CFG.audio.normalise });
 let audioT;
@@ -649,6 +671,7 @@ function initEngine() {
 /* ---------------- playback controls ---------------- */
 const isLocal = () => S.player && S.now?.source === 'sdk';
 const fail = e => {
+  noteErr(`playback ${e.status || ''} ${e.reason || ''} ${e.message || ''}`);
   if (e.status === 404) toast(useEngine() ? 'Audio engine isn’t connected yet — give it a second and try again.' : 'No active device. Open Spotify somewhere, or use Chrome/Edge with Premium.');
   // Spotify answers 403 for lots of things (a song blocked in your country, a command the device can't do
   // right now …); it's only about Premium when Spotify says so.
@@ -728,7 +751,14 @@ async function pause() {
   try { await api('/me/player/pause', { method: 'PUT' }); pollSoon(900); } catch (e) { S.opt = null; fail(e); pollSoon(200); }
 }
 const togglePlay = () => { activate(); return !S.now || S.now.paused ? resume() : pause(); };
+// Pressing Next early (before 30 s, or half of a short song) counts as a skip, for Stats.
+function noteSkip() {
+  const n = S.now; if (!n?.uri || !IS_APP) return;
+  const at = pos();
+  if (at < Math.min(30000, (n.duration || 60000) * 0.5)) window.amplite.history('skip', { uri: n.uri, title: n.name, artist: n.artists?.map(a => a.name).join(', '), at, ctx: n.context || '' }).catch(() => {});
+}
 async function next() {
+  noteSkip();
   if (isLocal()) return S.player.nextTrack();
   acted(); try { await api('/me/player/next', { method: 'POST' }); pollBurst(); } catch (e) { fail(e); }
 }
@@ -858,6 +888,7 @@ function updatePlayerUI() {
     if (D.tab === 'info') setTimeout(renderInfo, 300);
     if (FS.open) fsTrack();
     if (S.themeId === 'art') artTheme();
+    if (CFG.amp.skin === 'art') ampArt();
     if (CFG.amp.plOpen) setTimeout(renderAmpPl, PLW.tab === 'queue' ? 500 : 0);
   }
   document.title = n ? `${n.name} · ${n.artists.map(a => a.name).join(', ')}` : 'Amplite';
@@ -928,7 +959,10 @@ async function viewStats(el, _arg, alive) {
   if (!IS_APP) { el.innerHTML = '<div class="pad"><p class="note">Stats are available in the desktop app.</p></div>'; return; }
   const m = await import('./stats.js');
   if (!alive()) return;
-  await m.viewStats(el, { meName: S.me?.display_name || S.me?.id || '', api, bgApi: (p, o = {}) => api(p, { ...o, bg: true }), rateLimited, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive });
+  await m.viewStats(el, { meName: S.me?.display_name || S.me?.id || '', api, bgApi: (p, o = {}) => api(p, { ...o, bg: true }), rateLimited, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive,
+    resolveRec, toast, navigate, needsEditPermission, removeFromPlaylist, queuePl: store.get('queuePl', ''), openWrapped: () => openWrapped(),
+    playlist: id => S.playlists?.find(p => p?.id === id), canEdit: id => { const p = S.playlists?.find(x => x?.id === id); return !!p && canEdit(p); },
+    savePlaylist: async (name, desc, uris) => { const pl = await api('/me/playlists', { method: 'POST', body: { name, description: desc, public: false } }); await api(`/playlists/${pl.id}/items`, { method: 'POST', body: { uris: uris.slice(0, 100) } }); refreshPlaylists(); return pl; } });
 }
 // Library: saved albums and artists you follow.
 async function viewLibrary(el, _arg, alive) {
@@ -973,7 +1007,7 @@ async function viewLibrary(el, _arg, alive) {
   $('#libGrid').addEventListener('click', e => { if (e.target.closest('[data-allow-login]')) login(); });
   el.querySelector('.lib-ctl').addEventListener('click', e => { const b = e.target.closest('[data-libtab]'); if (b && b.dataset.libtab !== tab) { store.set('libTab', b.dataset.libtab); navigate('library', '', false); } });
 }
-const VIEWS = { timeline: async (el, _a, alive) => (await import('./timeline.js')).viewTimeline(el, {
+const VIEWS = { friends: async (el, _a, alive) => (await import('./friends.js')).viewFriends(el, { store, esc, svg, toast, api, resolveRec, playUris: u => playUris(u, 0), navigate, refreshPlaylists, needsEditPermission, rateLimited }, alive), timeline: async (el, _a, alive) => (await import('./timeline.js')).viewTimeline(el, {
     histItems, pool, resolveRec, playUris, api, toast, esc, svg, store, navigate, needsEditPermission, refreshPlaylists,
     forgetHistory: () => { HC.at = 0; HC.items = []; },
     searchFor: q => { $('#searchInput').value = q; navigate('search'); } }, alive), health: async (el, arg) => (await import('./health.js')).viewHealth(el, {
@@ -1005,7 +1039,7 @@ function goFwd() { if (!S.fwd.length) return; S.back.push(S.cur); const v = S.fw
 
 const pinAttr = o => `data-pinfo="${esc(JSON.stringify({ type: o.type, id: o.id, uri: o.uri, name: o.name, image: o.image || '' }))}"`;
 function card({ kind, id, uri, title, sub, image, round }) {
-  return `<div class="card ${round ? 'round' : ''}" data-open="${kind}:${esc(id)}" ${pinAttr({ type: kind, id, uri, name: title, image })}>
+  return `<div class="card ${round ? 'round' : ''}" draggable="true" data-open="${kind}:${esc(id)}" ${pinAttr({ type: kind, id, uri, name: title, image })}>
     <div class="art">${image ? `<img src="${esc(image)}" alt="" loading="lazy">` : `<div class="ph">${svg('music')}</div>`}
       <button class="card-play" data-play="${esc(uri)}" title="Play">${svg('play')}</button></div>
     <div class="card-title">${esc(title)}</div><div class="card-sub">${esc(sub || '')}</div></div>`;
@@ -1178,6 +1212,7 @@ async function viewHome(el, _, alive) {
   el.innerHTML = `<div class="home"><div class="pad">
     <h1 class="greet">${greet}${first ? ', ' + esc(first) : ''}</h1>
     <div class="quick">${tiles.join('')}</div>
+    <section id="hWrapped" hidden></section>
     <section id="hDiscover" hidden></section>
     <section><h2>Jump back in</h2><div class="grid" id="hRecent">${'<div class="skel"></div>'.repeat(6)}</div></section>
     <section><h2>On repeat lately</h2><div id="hTop"><p class="muted">Loading…</p></div></section>
@@ -1186,6 +1221,7 @@ async function viewHome(el, _, alive) {
   </div></div>`;
   homeFromHistory(alive);
   dmHome(alive);
+  wrappedHome(alive);
 
   api('/me/player/recently-played', { query: { limit: 50 } }).then(d => {
     if (!alive()) return;
@@ -1897,7 +1933,7 @@ async function loadPlaylists(fresh = false) {
     S.plRetryT = setTimeout(() => loadPlaylists(true), Math.max(30000, RL.until - Date.now() + 1000));
     if (!S.playlists?.length) { $('#playlists').innerHTML = '<p class="muted" style="padding:0 12px;font-size:13px">Couldn’t load your playlists. Retrying…</p>'; return; }
   }
-  $('#playlists').innerHTML = S.playlists.filter(Boolean).map(p => `<button class="pl-item" data-open="playlist:${esc(p.id)}" data-id="${esc(p.id)}" title="${esc(p.name)}" ${pinAttr({ type: 'playlist', id: p.id, uri: p.uri, name: p.name, image: img(p.images, 64) })}>
+  $('#playlists').innerHTML = S.playlists.filter(Boolean).map(p => `<button class="pl-item" draggable="true" data-open="playlist:${esc(p.id)}" data-id="${esc(p.id)}" title="${esc(p.name)}" ${pinAttr({ type: 'playlist', id: p.id, uri: p.uri, name: p.name, image: img(p.images, 64) })}>
     ${img(p.images, 64) ? `<img src="${esc(img(p.images, 64))}" alt="" loading="lazy">` : `<div class="ph">${svg('music')}</div>`}
     <div class="pl-meta"><div class="pl-name">${esc(p.name)}</div><div class="pl-sub">Playlist · ${esc(p.owner?.display_name || '')}</div></div></button>`).join('')
     || '<p class="muted" style="padding:0 12px;font-size:13px">No playlists yet.</p>';
@@ -2198,13 +2234,24 @@ function dropTarget(el) {
 function bindDrag() {
   let dragging = null, ghost = null;
   document.addEventListener('dragstart', e => {
-    const row = e.target.closest?.('.trow'); if (!row) return;
+    const row = e.target.closest?.('.trow');
+    if (!row) {
+      // Albums, playlists and artists (cards, pins, the sidebar) drag out as their Spotify link,
+      // so you can drop them into Discord or a chat.
+      const it = e.target.closest?.('[data-open]'), [kind, id] = (it?.dataset.open || '').split(':');
+      if (!id || !['album', 'playlist', 'artist'].includes(kind)) { if (e.target.tagName === 'IMG') e.preventDefault(); return; }
+      const link = `https://open.spotify.com/${kind}/${id}`;
+      e.dataTransfer.setData('text/plain', link); e.dataTransfer.setData('text/uri-list', link);
+      if (!it.matches('[data-pin-idx]')) e.dataTransfer.effectAllowed = 'copyLink';
+      return;
+    }
     const li = +row.closest('.tracks').dataset.list;
     if (!(SEL.li === li && SEL.idx.has(+row.dataset.idx))) selectRow(row, {});
     dragging = selTracks(); if (!dragging.length) return;
-    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.effectAllowed = 'copyLink';
     e.dataTransfer.setData(DRAG_TYPE, '1');
-    e.dataTransfer.setData('text/plain', dragging.map(t => 'https://open.spotify.com/track/' + t.id).join('\n'));
+    const links = dragging.filter(t => t.id).map(t => 'https://open.spotify.com/track/' + t.id);
+    e.dataTransfer.setData('text/plain', links.join('\n')); e.dataTransfer.setData('text/uri-list', links.join('\r\n'));
     ghost = document.createElement('div'); ghost.className = 'drag-ghost';
     ghost.textContent = dragging.length === 1 ? dragging[0].name : `${dragging.length} songs`;
     document.body.append(ghost); e.dataTransfer.setDragImage(ghost, 12, 12);
@@ -2336,6 +2383,37 @@ function playlistTools(e) {
   if (pl?.own && IS_APP) items.push({ icon: 'edit', label: 'Change cover…', run: openCoverMaker });
   if (IS_APP) items.push({ icon: 'share', label: 'Export as spreadsheet (CSV)…', run: exportPlaylist });
   showCtx(e, items);
+}
+
+// ---- What's new (after an update) ----
+async function whatsNew(force = false) {
+  if (!IS_APP) return;
+  const info = await window.amplite.info().catch(() => null); if (!info?.version) return;
+  const seen = store.get('seenVersion', '');
+  const m = await import('./whatsnew.js');
+  if (force) return m.showNotes({ esc, svg, navigate, openWrapped }, Object.keys(m.NOTES).slice(0, 1), info.version);
+  store.set('seenVersion', info.version);
+  if (!seen || seen === info.version) return; // first install, or nothing new
+  m.showNotes({ esc, svg, navigate, openWrapped }, m.notesSince(seen, info.version), info.version);
+}
+
+// ---- Wrapped (lazy-loaded) ----
+async function openWrapped(year) {
+  const m = await import('./wrapped.js');
+  m.openWrapped({ histItems, artistImage, resolveRec, api, toast, esc, svg, navigate, refreshPlaylists, needsEditPermission }, year);
+}
+// Late November to mid January: a "your year is ready" banner on Home.
+async function wrappedHome(alive) {
+  const box = $('#hWrapped'); if (!box) return;
+  const d = new Date(), m = d.getMonth(), day = d.getDate();
+  const year = m === 11 || (m === 10 && day >= 25) ? d.getFullYear() : m === 0 && day <= 15 ? d.getFullYear() - 1 : 0;
+  if (!year || store.get('wrappedHide') === year) return;
+  const n = (await histItems().catch(() => [])).filter(r => new Date(r.ts * 1000).getFullYear() === year).length;
+  if (!alive() || n < 50) return;
+  box.hidden = false;
+  box.innerHTML = `<div class="wr-banner" data-wr-open="${year}"><div><small>Amplite Wrapped</small><h3>Your ${year} in music is ready</h3><p>Your top artists and songs, your obsession month, your listening personality and more.</p></div>
+    <button class="btn primary" data-wr-open="${year}">Watch it</button><button class="icon-btn" data-wr-hide="${year}" title="Hide until next year">${svg('x')}</button></div>`;
+  box.onclick = e => { const h = e.target.closest('[data-wr-hide]'); if (h) { e.stopPropagation(); store.set('wrappedHide', +h.dataset.wrHide); box.hidden = true; return; } const o = e.target.closest('[data-wr-open]'); if (o) openWrapped(+o.dataset.wrOpen); };
 }
 
 // ---- playlist cover maker (lazy-loaded) ----
@@ -3263,35 +3341,56 @@ function themeToShell() {
 }
 // "From album art": a dark theme tinted by the cover's main color, with its most vivid color as the
 // accent. It glides to the new colors when the song changes (see @property in styles.css).
+// The cover's main hue and its most vivid color (used by the album-art theme and the amp's album-art skin).
+const COVERC = new Map();
+async function coverColors(url) {
+  if (COVERC.has(url)) return COVERC.get(url);
+  const data = await window.amplite.imageData(url); if (!data) throw new Error('no image');
+  const im = new Image(); im.src = data; await im.decode();
+  const c = document.createElement('canvas'); c.width = c.height = 24; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, 24, 24);
+  const d = x.getImageData(0, 0, 24, 24).data, bins = new Map();
+  for (let i = 0; i < d.length; i += 4) {
+    const [h, s, l] = hex2hsl(rgbHex(d[i], d[i + 1], d[i + 2])), b = Math.round(h / 20) % 18;
+    const e = bins.get(b) || { n: 0, h: 0, s: 0, vivid: 0, vh: 0, vs: 0, vl: 0 };
+    const w = (s / 100) * (1 - Math.abs(l - 50) / 60);
+    e.n += 0.2 + w; e.h += h; e.s += s;
+    if (w > e.vivid) { e.vivid = w; e.vh = h; e.vs = s; e.vl = l; }
+    bins.set(b, e);
+  }
+  const main = [...bins.values()].sort((a, b) => b.n - a.n)[0];
+  const pop = [...bins.values()].sort((a, b) => b.vivid * Math.sqrt(b.n) - a.vivid * Math.sqrt(a.n))[0] || main;
+  const hue = main.vh || main.h / main.n, sat = Math.min(60, (main.vs || 30));
+  const accent = pop.vivid > 0.12 ? hsl2hex(pop.vh, Math.max(55, pop.vs), Math.max(58, Math.min(70, pop.vl + 15))) : hsl2hex(hue, 45, 68);
+  const out = { hue, sat, accent, accentHue: pop.vivid > 0.12 ? pop.vh : hue };
+  if (COVERC.size > 50) COVERC.delete(COVERC.keys().next().value);
+  COVERC.set(url, out); return out;
+}
 async function artTheme() {
   if (S.themeId !== 'art') return;
   const url = S.now?.album?.image; if (!url || !IS_APP) return;
   if (url === ARTT.key) return;
   ARTT.key = url;
   try {
-    const data = await window.amplite.imageData(url); if (!data || ARTT.key !== url || S.themeId !== 'art') return;
-    const im = new Image(); im.src = data; await im.decode();
-    const c = document.createElement('canvas'); c.width = c.height = 24; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, 24, 24);
-    const d = x.getImageData(0, 0, 24, 24).data, bins = new Map();
-    for (let i = 0; i < d.length; i += 4) {
-      const [h, s, l] = hex2hsl(rgbHex(d[i], d[i + 1], d[i + 2])), b = Math.round(h / 20) % 18;
-      const e = bins.get(b) || { n: 0, h: 0, s: 0, vivid: 0, vh: 0, vs: 0, vl: 0 };
-      const w = (s / 100) * (1 - Math.abs(l - 50) / 60);
-      e.n += 0.2 + w; e.h += h; e.s += s;
-      if (w > e.vivid) { e.vivid = w; e.vh = h; e.vs = s; e.vl = l; }
-      bins.set(b, e);
-    }
-    const ranked = [...bins.values()].sort((a, b) => b.n - a.n), main = ranked[0];
-    const pop = [...bins.values()].sort((a, b) => b.vivid * Math.sqrt(b.n) - a.vivid * Math.sqrt(a.n))[0] || main;
-    const hue = main.vh || main.h / main.n, sat = Math.min(60, (main.vs || 30));
+    const { hue, sat, accent } = await coverColors(url); if (ARTT.key !== url || S.themeId !== 'art') return;
     const bg = hsl2hex(hue, sat * 0.55, 7), text = hsl2hex(hue, 15, 94);
-    const accent = pop.vivid > 0.12 ? hsl2hex(pop.vh, Math.max(55, pop.vs), Math.max(58, Math.min(70, pop.vl + 15))) : hsl2hex(hue, 45, 68);
     ARTT.vars = deriveTheme({ bg, text, accent, panel: hsl2hex(hue, sat * 0.5, 10), elev: hsl2hex(hue, sat * 0.45, 14), hover: hsl2hex(hue, sat * 0.42, 19), border: hsl2hex(hue, sat * 0.4, 18), muted: hsl2hex(hue, 14, 64) });
     if (S.themeId !== 'art') return;
     document.documentElement.classList.add('theme-glide');
     setThemeStyle(themeCss(ARTT.vars));
     S.vizGrad = null; applyAccent(); themeToShell();
   } catch { ARTT.key = ''; }
+}
+// Mini amp "Album art" skin: the amp's frame, display and visualizer take the cover's colors.
+async function ampArt() {
+  if (CFG.amp.skin !== 'art' || !IS_APP) return;
+  const url = S.now?.album?.image; if (!url || url === S.ampArtKey) return;
+  S.ampArtKey = url;
+  try {
+    const { hue, sat, accent, accentHue } = await coverColors(url); if (S.ampArtKey !== url) return;
+    S.ampArt = { frame: hsl2hex(hue, sat * 0.45, 15), frameHi: hsl2hex(hue, sat * 0.45, 30), lcd: hsl2hex(hue, sat * 0.6, 5), text: accent, lo: accent,
+      mid: hsl2hex((accentHue + 35) % 360, 75, 62), hi: hsl2hex((accentHue + 70) % 360, 85, 72), btn: hsl2hex(hue, 18, 86), label: hsl2hex(hue, 16, 62) };
+    applyAmp();
+  } catch { S.ampArtKey = ''; }
 }
 // Day and night themes: switch at the times you set. Picking a theme by hand sticks until the next switch.
 function autoTheme() {
@@ -3417,6 +3516,7 @@ function ampClose() { if (S.ampWin) S.ampWin.close(); closeInline(); }
 /* ---- skins + customisation ---- */
 const SKINS = {
   theme:   { name: 'Match theme' },
+  art:     { name: 'Album art' },
   classic: { name: 'Classic',   frame: '#2c2c38', frameHi: '#55556a', lcd: '#000000', text: '#00e800', lo: '#00c000', mid: '#e8e800', hi: '#ff2a00', btn: '#d8d8e0', label: '#9a9aa8' },
   amber:   { name: 'Amber',     frame: '#2a2118', frameHi: '#4a3a28', lcd: '#0d0802', text: '#ffb000', lo: '#ff8c00', mid: '#ffb000', hi: '#ffe08a', btn: '#f3dcb5', label: '#a8906c' },
   ice:     { name: 'Ice',       frame: '#1b2633', frameHi: '#344a60', lcd: '#03101a', text: '#7fd8ff', lo: '#3aa8ff', mid: '#7fd8ff', hi: '#e0f7ff', btn: '#d8ecff', label: '#7f9bb3' },
@@ -3433,7 +3533,8 @@ const BAR_W = 5;
 
 function applyAmp() {
   const c = CFG.amp, st = ampEl.style;
-  const colors = c.skin === 'custom' ? c.colors : SKINS[c.skin] || {};
+  if (c.skin === 'art' && !S.ampArt) ampArt();
+  const colors = c.skin === 'custom' ? c.colors : c.skin === 'art' ? S.ampArt || {} : SKINS[c.skin] || {};
   for (const [k, v] of Object.entries(AMP_VARS)) {
     if (c.skin !== 'theme' && colors[k]) st.setProperty(v, colors[k]); else st.removeProperty(v);
   }
@@ -3824,6 +3925,7 @@ const grp = (title, body) => `<section class="set-group"><h3>${title}</h3>${body
 function settingsHTML() {
   const skinBtns = Object.entries(SKINS).map(([id, s]) => {
     const sty = id === 'theme' ? 'background:var(--amp-lcd);color:var(--amp-lcd-text)'
+      : id === 'art' ? 'background:linear-gradient(135deg,#e0526b,#f2a541 35%,#3f8cff 70%,#a85cff);color:#fff;box-shadow:inset 0 0 0 3px #222'
       : id === 'custom' ? `background:${CFG.amp.colors.lcd};color:${CFG.amp.colors.text}`
       : `background:${s.lcd};color:${s.text};box-shadow:inset 0 0 0 3px ${s.frame}`;
     return `<button class="skin" data-skin="${id}"><i style="${sty}">01:23</i>${s.name}</button>`;
@@ -3887,7 +3989,7 @@ function settingsHTML() {
         + sw('audio.normalise', 'Normalize volume', 'Keeps loudness consistent between songs'))
       + grp('Troubleshooting', `<div class="set-row"><div class="lbl">Restart audio engine<small>Try this if playback stops responding</small></div><button class="btn ctl" id="engRestart">Restart</button></div>
         <div class="set-row"><div class="lbl">Re-link audio engine<small>Signs the engine in again through your browser. Make sure the browser is logged into your own Spotify account.</small></div><button class="btn ctl" id="engRelink">Re-link</button></div>
-        <div class="set-row"><div class="lbl">Copy diagnostics<small>Version, account type, devices and recent engine log (no passwords or tokens)</small></div><button class="btn ctl" id="engDiag">Copy</button></div>`),
+        <div class="set-row"><div class="lbl">Diagnostics<small>Version, account type, devices, recent errors and the engine log (no passwords or tokens)</small></div><span class="row-btns"><button class="btn ctl" id="engDiag">Copy</button><button class="btn ctl" id="engDiagSave">Save file…</button></span></div>`),
     connect: grp('Phone remote', sw('ui.remote', 'Control Amplite from your phone', 'Play/pause, skip, seek, volume and like from your phone’s browser, on the same Wi-Fi. No app needed')
         + `<div id="remoteBox"></div>`)
       + grp('Last.fm', `<div id="lfmBox"></div>`)
@@ -3896,6 +3998,8 @@ function settingsHTML() {
           <div class="ctl"><input class="set-text" id="discordId" placeholder="Application ID" spellcheck="false" autocomplete="off" maxlength="22"></div></div>
           <div class="set-row"><div class="lbl">Status</div><span class="muted" id="discordState">Off</span></div>`),
     about: `<div class="about-logo"><span class="logo" data-logo></span><div><b>Amplite</b><span class="muted" id="aboutVer"></span></div></div>`
+      + grp('Help', `<div class="set-row"><div class="lbl">Something not working?<small>Saves a file with what’s going on (versions, devices, recent errors, engine log) to send for help. No passwords or tokens.</small></div><button class="btn ctl" id="aboutDiag">Save diagnostics…</button></div>
+        <div class="set-row"><div class="lbl">What’s new<small>The changes in recent updates</small></div><button class="btn ctl" id="aboutNew">Show</button></div>`)
       + grp('Spotify app', `<div class="set-row"><div class="lbl">${ownClientId() ? `Your own app (…${esc(clientId().slice(-6))})` : 'Built-in app'}<small>The Spotify developer app Amplite signs in through. Use your own so you don’t need to be on anyone else’s user list.</small></div><button class="btn ctl" id="cidChange">Change</button></div>`)
       + (IS_APP ? grp('Updates', `<div class="set-row"><div class="lbl">Check for updates<small>Amplite also checks automatically</small></div><button class="btn ctl" id="aboutUpd">Check now</button></div>`) : '')
       + grp('Keyboard shortcuts', [['Space', 'Play / pause'], ['Ctrl + ← / →', 'Previous / next'], ['M', 'Mini amp'], ['/', 'Search'], ['Ctrl + B', 'Collapse sidebar'], ['Ctrl + ,', 'Settings'], ['Esc', 'Close settings']]
@@ -4067,6 +4171,9 @@ function bindSettings(root) {
     if (e.target.closest('#aboutUpd')) { $('#updBtn').click(); return; }
     if (e.target.closest('#cidChange')) { store.set('openSetup', true); logout(); return; }
     if (e.target.closest('#engDiag')) { copyDiagnostics(); return; }
+    if (e.target.closest('#engDiagSave')) { saveDiagnostics(); return; }
+    if (e.target.closest('#aboutDiag')) { saveDiagnostics(); return; }
+    if (e.target.closest('#aboutNew')) { closeSettings(); whatsNew(true); return; }
     if (e.target.closest('#lfmConnect')) { lastfmConnect(); return; }
     if (e.target.closest('#remoteReset')) { window.amplite.remote('reset').then(renderRemote); return; }
     if (e.target.closest('#remoteCopy')) { navigator.clipboard.writeText($('#remoteUrl')?.textContent || '').then(() => toast('Link copied')); return; }
@@ -4272,6 +4379,7 @@ async function boot() {
   navigate('home');
   if (IS_APP) initEngine(); else initSDK();
   nrBadge(); nrSchedule(); dmSchedule();
+  setTimeout(() => whatsNew(), 2500);
   if (IS_APP && (await window.amplite.startupMode()) === 'amp') setTimeout(() => toggleAmp(), 600);
   poll();
   schedulePoll();

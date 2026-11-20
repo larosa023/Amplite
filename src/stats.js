@@ -433,7 +433,7 @@ async function openShare(btn) {
 }
 
 function rangeTabs() {
-  return `<div class="st-head-ctl"><button class="btn st-share-btn" data-st-share title="Make an image of these stats to share">${C.svg('share')} Share</button><div class="seg st-range" role="tablist">${Object.entries(RANGES).map(([k, v]) => `<button class="${k === range ? 'on' : ''}" data-st-range="${k}">${v.label}</button>`).join('')}</div></div>`;
+  return `<div class="st-head-ctl"><button class="btn st-share-btn" data-st-wrapped title="Your year as a story">${C.svg('sparkle')} Wrapped</button><button class="btn st-share-btn" data-st-share title="Make an image of these stats to share">${C.svg('share')} Share</button><div class="seg st-range" role="tablist">${Object.entries(RANGES).map(([k, v]) => `<button class="${k === range ? 'on' : ''}" data-st-range="${k}">${v.label}</button>`).join('')}</div></div>`;
 }
 function isLight() {
   const bg = hexOf(getComputedStyle(document.documentElement).getPropertyValue('--bg'));
@@ -470,6 +470,11 @@ async function render(skipLoad) {
       ${heatHTML(heatmap(items), d)}
       ${d.discoveries.length ? `<section class="st-card wide"><h3>New to you</h3><p class="st-sub">${d.discoveries.length} artist${d.discoveries.length === 1 ? '' : 's'} you hadn't played before</p><ul class="st-chips">${d.discoveries.slice(0, 12).map(a => `<li data-tip="${esc(a.name)} — ${hm(a.ms)}">${esc(a.name)}</li>`).join('')}</ul></section>` : ''}
       <div id="stDrift" class="st-wide-slot"><section class="st-card wide"><h3>Genre drift</h3><div class="loading small"><span></span><span></span><span></span></div></section></div>
+      <div id="stParts" class="st-wide-slot">${partsHTML(lastParts = dayParts(d.inR))}</div>
+      <div id="stGenres" class="st-wide-slot"><section class="st-card wide"><h3>Genre map</h3><div class="loading small"><span></span><span></span><span></span></div></section></div>
+      <div id="stSkips"></div>
+      <div id="stAlbums"></div>
+      <div id="stYears" class="st-wide-slot">${yearsHTML(items, lastYears?.[0], lastYears?.[1])}</div>
     </div>
     ${importBox}
     <p class="st-foot muted">Stats are kept only on this PC. <button class="link-btn" data-st-clear>Clear history</button></p>
@@ -480,7 +485,167 @@ async function render(skipLoad) {
     if (!C.alive()) return;
     const card = el.querySelector('.st-rank')?.closest('.st-card'); if (card) card.outerHTML = topArtistsHTML(d);
   });
-  genreDrift(items).then(g => { lastG = g; if (!C.alive()) return; const slot = el.querySelector('#stDrift'); if (slot) slot.innerHTML = driftHTML(g, isLight()); });
+  // Genre drift first, then the genre map reuses the same artist lookups.
+  genreDrift(items).then(g => { lastG = g; if (!C.alive()) return; const slot = el.querySelector('#stDrift'); if (slot) slot.innerHTML = driftHTML(g, isLight()); })
+    .then(() => genreMap(d)).then(gm => { lastGenres = gm; if (!C.alive()) return; const slot = el.querySelector('#stGenres'); if (slot) slot.innerHTML = genreMapHTML(gm); }).catch(() => {});
+  skipsHTML(d).then(h => { if (C.alive()) { const s2 = el.querySelector('#stSkips'); if (s2) s2.innerHTML = h; } });
+  albumsHTML(items, d).then(h => { if (C.alive()) { const s2 = el.querySelector('#stAlbums'); if (s2) s2.innerHTML = h; } }).catch(() => {});
+}
+
+
+/* ---------------- more sections: your day, skips, albums, genre map, year vs year ---------------- */
+const PARTS = [['morning', 'Mornings', 5, 12], ['afternoon', 'Afternoons', 12, 17], ['evening', 'Evenings', 17, 22], ['night', 'Late nights', 22, 29]];
+const partOf = ts => { const h = new Date(ts * 1000).getHours(), hh = h < 5 ? h + 24 : h; return PARTS.find(p => hh >= p[2] && hh < p[3])?.[0] || 'night'; };
+let lastParts = null, lastGenres = null, lastYears = null;
+function dayParts(inR) {
+  const out = PARTS.map(([id, name]) => ({ id, name, ms: 0, art: new Map(), songs: new Map() }));
+  for (const r of inR) {
+    const p = out.find(x => x.id === partOf(r.ts)), ms = playMs(r), a = artistsOf(r)[0];
+    p.ms += ms;
+    if (a) { const k = keyOf(a), e = p.art.get(k) || { name: a, ms: 0 }; e.ms += ms; p.art.set(k, e); }
+    const sk = r.uri || keyOf(a) + '|' + keyOf(r.title), s = p.songs.get(sk) || { title: r.title, artist: artistsOf(r).join(', '), uri: r.uri, n: 0 };
+    s.n++; if (!s.uri && r.uri) s.uri = r.uri; p.songs.set(sk, s);
+  }
+  out.forEach(p => { p.topArt = [...p.art.values()].sort((a, b) => b.ms - a.ms); p.top = [...p.songs.values()].sort((a, b) => b.n - a.n); });
+  return out;
+}
+function partsHTML(parts) {
+  const total = parts.reduce((t, p) => t + p.ms, 0); if (!total) return '';
+  const lead = [...parts].sort((a, b) => b.ms - a.ms)[0];
+  const line = parts.filter(p => p.topArt[0]).map(p => `${p.name.toLowerCase()} are <b>${esc(p.topArt[0].name)}</b>`);
+  return `<section class="st-card wide"><h3>Your day</h3><p class="st-sub">${line.length > 1 ? line.join(', ').replace(/^./, c => c.toUpperCase()) + '.' : `Most of your listening is in the ${lead.name.toLowerCase()}.`}</p>
+    <div class="st-parts">${parts.map(p => `<div class="st-part${p === lead ? ' lead' : ''}"><div class="st-part-h"><b>${p.name}</b><span>${p.ms ? hm(p.ms) : '—'}</span></div>
+      <div class="st-part-bar"><i style="width:${(p.ms / total * 100).toFixed(1)}%"></i></div>
+      ${p.topArt.length ? `<ol>${p.top.slice(0, 3).map(s => `<li><b>${esc(s.title)}</b><small>${esc(s.artist)}</small></li>`).join('')}</ol>
+      <button class="btn ctl" data-st-part="${p.id}" title="Save your most-played ${p.name.toLowerCase()} songs as a playlist">Make a playlist</button>` : '<p class="muted">Nothing yet</p>'}</div>`).join('')}</div></section>`;
+}
+async function partPlaylist(id, btn) {
+  const p = lastParts?.find(x => x.id === id); if (!p) return;
+  btn.disabled = true; const t = btn.textContent; btn.textContent = 'Making it…';
+  try {
+    const uris = [];
+    for (const s of p.top.slice(0, 40)) {
+      if (s.uri) { uris.push(s.uri); continue; }
+      const r = await C.resolveRec(s.artist.split(',')[0], s.title).catch(() => null); if (r?.uri) uris.push(r.uri);
+    }
+    if (!uris.length) { C.toast('Couldn’t find those songs on Spotify.'); return; }
+    const name = `${p.name} · Amplite`;
+    const pl = await C.savePlaylist(name, `What you play most in the ${p.name.toLowerCase()}, made by Amplite from your stats.`, [...new Set(uris)]);
+    C.toast(`Saved “${name}”`, { label: 'Open', run: () => C.navigate('playlist', pl.id) });
+  } catch (e) { if (!C.needsEditPermission(e)) C.toast(e.message); }
+  finally { btn.disabled = false; btn.textContent = t; }
+}
+// Skips: songs you pressed Next on early.
+let skipCache = null;
+async function skipsHTML(d) {
+  const r = await window.amplite.history('skips').catch(() => null);
+  const all = (r?.items || []).filter(s => s.ts * 1000 >= (d.from || 0));
+  skipCache = all;
+  if (all.length < 3) return `<section class="st-card"><h3>Skips</h3><p class="st-sub">Songs you skip in the first 30 seconds show up here as you listen.</p></section>`;
+  const plays = new Map(); d.inR.forEach(x => x.uri && plays.set(x.uri, (plays.get(x.uri) || 0) + 1));
+  const by = new Map();
+  for (const s of all) { const e = by.get(s.uri) || { ...s, n: 0, ctxs: new Map() }; e.n++; if (s.ctx) e.ctxs.set(s.ctx, (e.ctxs.get(s.ctx) || 0) + 1); by.set(s.uri, e); }
+  const list = [...by.values()].map(e => ({ ...e, plays: plays.get(e.uri) || 0, rate: e.n / (e.n + (plays.get(e.uri) || 0)) })).sort((a, b) => b.n - a.n || b.rate - a.rate);
+  // Songs you skip nearly every time in one of your own playlists.
+  const sugg = [];
+  for (const e of list) for (const [ctx, n] of e.ctxs) {
+    const id = /^spotify:playlist:(.+)$/.exec(ctx)?.[1];
+    if (id && id !== C.queuePl && n >= 3 && e.rate >= 0.7 && C.canEdit(id)) sugg.push({ ...e, plId: id, plName: C.playlist(id)?.name || 'a playlist', times: n });
+  }
+  const skipped = all.length, rate = Math.round(skipped / (skipped + d.plays) * 100);
+  return `<section class="st-card"><h3>Skips</h3><p class="st-sub">You skipped ${skipped.toLocaleString()} song${skipped === 1 ? '' : 's'} early (${rate}% of what came on)</p>
+    <ol class="st-songs st-skips">${list.slice(0, 6).map(e => `<li data-tip="Skipped ${e.n} time${e.n === 1 ? '' : 's'}, played ${e.plays}"><span class="st-text"><b>${esc(e.title)}</b><small>${esc(e.artist)}</small></span><span class="st-val">${e.n}× · ${Math.round(e.rate * 100)}%</span></li>`).join('')}</ol>
+    ${sugg.length ? `<div class="st-sugg"><h4>Always skipped in your playlists</h4>${sugg.slice(0, 5).map(e => `<div class="st-sugg-row"><span><b>${esc(e.title)}</b> in ${esc(e.plName)} <small>skipped ${e.times}×</small></span><button class="btn ctl" data-st-unskip="${esc(e.plId)}" data-uri="${esc(e.uri)}">Remove from playlist</button></div>`).join('')}</div>` : ''}</section>`;
+}
+// Albums: how much of each album you've heard, and how often you play it front to back.
+async function albumsHTML(items, d) {
+  const by = new Map();
+  for (const r of d.inR) { if (!r.albumId) continue; const e = by.get(r.albumId) || { id: r.albumId, name: r.album, artist: artistsOf(r)[0], image: r.image, ms: 0 }; e.ms += playMs(r); by.set(r.albumId, e); }
+  const top = [...by.values()].sort((a, b) => b.ms - a.ms).slice(0, 8);
+  if (!top.length) return '';
+  const cache = C.store.get('albTracks', {}) || {};
+  await pool(top.filter(a => !cache[a.id]), 2, async a => { try { const x = await C.bgApi(`/albums/${a.id}`); cache[a.id] = x.total_tracks || x.tracks?.total || 0; } catch {} });
+  C.store.set('albTracks', cache);
+  const sorted = items.filter(r => r.albumId).sort((a, b) => a.ts - b.ts);
+  let fullAll = 0, sessAll = 0;
+  for (const a of top) {
+    const total = cache[a.id] || 0, songs = new Set(sorted.filter(r => r.albumId === a.id).map(r => r.uri));
+    a.total = total; a.heard = total ? Math.min(total, songs.size) : songs.size; a.full = 0;
+    // sessions: songs from this album back to back (gaps under 15 min)
+    let cur = null;
+    for (const r of sorted) {
+      if (r.albumId !== a.id) { if (cur && r.ts - cur.last > 900) { done(); } continue; }
+      if (!cur || r.ts - cur.last > 900) { done(); cur = { set: new Set(), last: r.ts }; }
+      cur.set.add(r.uri); cur.last = r.ts;
+    }
+    done();
+    function done() { if (!cur) return; sessAll++; if (total && cur.set.size >= (total <= 4 ? total : Math.max(4, Math.ceil(total * 0.8)))) { a.full++; fullAll++; } cur = null; }
+  }
+  return `<section class="st-card"><h3>Albums</h3><p class="st-sub">${fullAll ? `You played ${fullAll} album${fullAll === 1 ? '' : 's'} front to back` : 'You mostly cherry-pick songs'}${sessAll ? ` · ${Math.round(fullAll / sessAll * 100)}% of album listens were the whole thing` : ''}</p>
+    <ol class="st-albums">${top.map(a => `<li data-tip="${esc(a.name)}: heard ${a.heard}${a.total ? ` of ${a.total}` : ''} songs${a.full ? ` · played through ${a.full}×` : ''}">
+      <span class="st-face">${a.image ? `<img src="${esc(a.image)}" alt="" loading="lazy">` : C.svg('music')}</span>
+      <span class="st-text"><a data-open="album:${esc(a.id)}"><b>${esc(a.name || 'Album')}</b></a><small>${esc(a.artist || '')}${a.full ? ` · whole album ${a.full}×` : ''}</small></span>
+      <span class="st-comp"><span class="st-barwrap"><span class="st-bar" style="width:${a.total ? Math.min(100, a.heard / a.total * 100).toFixed(0) : 0}%"></span></span><span class="st-val">${a.total ? `${a.heard}/${a.total}` : a.heard}</span></span></li>`).join('')}</ol></section>`;
+}
+// Genre map: a treemap of your listening by each artist's main genre.
+async function genreMap(d) {
+  const byArtist = new Map(); d.inR.forEach(r => { const a = artistsOf(r)[0]; if (!a) return; const k = keyOf(a); const e = byArtist.get(k) || { name: a, id: r.artistIds?.[0] || '', ms: 0 }; e.ms += playMs(r); byArtist.set(k, e); });
+  const top = [...byArtist.values()].sort((a, b) => b.ms - a.ms).slice(0, 40);
+  await pool(C.lastfmKey ? top : top.slice(0, 15), 3, a => artistInfo(a.name, a.id));
+  const m = infoMap(), g = new Map(); let covered = 0, all = 0;
+  for (const r of d.inR) { const ms = playMs(r); all += ms; const gg = m[keyOf(artistsOf(r)[0])]?.genres?.[0]; if (!gg) continue; covered += ms; const e = g.get(gg) || { name: gg, ms: 0, uris: new Set(), artists: new Map() }; e.ms += ms; if (r.uri) e.uris.add(r.uri); const a = artistsOf(r)[0]; e.artists.set(a, (e.artists.get(a) || 0) + ms); g.set(gg, e); }
+  const list = [...g.values()].sort((a, b) => b.ms - a.ms);
+  const shown = list.slice(0, 12), rest = list.slice(12);
+  if (rest.length) shown.push({ name: 'Other', ms: rest.reduce((t, x) => t + x.ms, 0), uris: new Set(rest.flatMap(x => [...x.uris])), artists: new Map(), other: true });
+  return { list: shown, coverage: all ? covered / all : 0 };
+}
+// Squarified treemap (Bruls et al.): rows of tiles that stay as close to square as possible.
+function squarify(vals, x, y, w, h) {
+  const out = [], total = vals.reduce((a, b) => a + b, 0) || 1, scale = (w * h) / total;
+  let items = vals.map((v, i) => ({ i, a: v * scale })), row = [];
+  const worst = (r, side) => { const s = r.reduce((t, o) => t + o.a, 0), mx = Math.max(...r.map(o => o.a)), mn = Math.min(...r.map(o => o.a)); return Math.max(side * side * mx / (s * s), (s * s) / (side * side * mn)); };
+  const layout = r => {
+    const s = r.reduce((t, o) => t + o.a, 0);
+    if (w >= h) { const cw = s / h; let cy = y; r.forEach(o => { const ch = o.a / cw; out[o.i] = { x, y: cy, w: cw, h: ch }; cy += ch; }); x += cw; w -= cw; }
+    else { const ch = s / w; let cx = x; r.forEach(o => { const cw2 = o.a / ch; out[o.i] = { x: cx, y, w: cw2, h: ch }; cx += cw2; }); y += ch; h -= ch; }
+  };
+  while (items.length) {
+    const side = Math.min(w, h), it = items[0];
+    if (!row.length || worst([...row, it], side) <= worst(row, side)) { row.push(it); items.shift(); }
+    else { layout(row); row = []; }
+  }
+  if (row.length) layout(row);
+  return out;
+}
+function genreMapHTML(gm) {
+  if (!gm?.list.length) return `<section class="st-card wide"><h3>Genre map</h3><p class="st-sub">${C.lastfmKey ? 'Not enough genre info yet.' : 'Add a Last.fm API key (Settings → Connections) to see your genres.'}</p></section>`;
+  const W = 1000, H = 300, rects = squarify(gm.list.map(x => x.ms), 0, 0, W, H), max = gm.list[0].ms, total = gm.list.reduce((t, x) => t + x.ms, 0);
+  return `<section class="st-card wide"><h3>Genre map</h3><p class="st-sub">Your listening by genre, sized by time. Click one to play your songs from it.${gm.coverage < 0.6 ? ` (Genres known for ${Math.round(gm.coverage * 100)}% of it.)` : ''}</p>
+    <div class="st-tree">${gm.list.map((g, i) => { const r = rects[i]; const share = g.ms / total;
+      // one hue, lighter for smaller genres (magnitude, not identity); "Other" in gray
+      const op = g.other ? 0 : 0.35 + 0.65 * (g.ms / max);
+      return `<button class="st-tile2${g.other ? ' other' : ''}${op > 0.68 ? ' strong' : ''}" data-st-genre="${i}" style="left:${r.x / W * 100}%;top:${r.y / H * 100}%;width:${r.w / W * 100}%;height:${r.h / H * 100}%;--o:${op.toFixed(2)}" data-tip="${esc(g.name)}: ${hm(g.ms)} (${Math.round(share * 100)}%)${g.artists.size ? ' · ' + esc([...g.artists].sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]).join(', ')) : ''}">
+        ${r.w > 70 && r.h > 34 ? `<b>${esc(g.name)}</b>${r.h > 56 ? `<small>${Math.round(share * 100)}%</small>` : ''}` : ''}</button>`; }).join('')}</div></section>`;
+}
+// Year vs year.
+function yearStats(items, y) {
+  const inY = items.filter(r => new Date(r.ts * 1000).getFullYear() === y), art = new Map();
+  inY.forEach(r => { const a = artistsOf(r)[0]; if (!a) return; const k = keyOf(a), e = art.get(k) || { name: a, ms: 0 }; e.ms += playMs(r); art.set(k, e); });
+  return { y, ms: inY.reduce((t, r) => t + playMs(r), 0), plays: inY.length, artists: art.size, top: [...art.values()].sort((a, b) => b.ms - a.ms) };
+}
+function yearsHTML(items, a, b) {
+  const years = [...new Set(items.map(r => new Date(r.ts * 1000).getFullYear()))].sort((x, y) => y - x);
+  if (years.length < 2) return `<section class="st-card wide"><h3>Year vs year</h3><p class="st-sub">Once you have more than one year of listening${C.lastfmUser ? ' (import your Last.fm history below)' : ''}, two years go side by side here.</p></section>`;
+  a = years.includes(a) ? a : years[0]; b = years.includes(b) && b !== a ? b : years.find(y => y !== a);
+  const A = yearStats(items, a), B = yearStats(items, b), keys = s => new Set(s.top.slice(0, 50).map(x => keyOf(x.name)));
+  const picked = A.top.slice(0, 15).filter(x => !keys(B).has(keyOf(x.name))).slice(0, 6), dropped = B.top.slice(0, 15).filter(x => !keys(A).has(keyOf(x.name))).slice(0, 6);
+  const sel = (id, v) => `<select class="st-year" data-st-year="${id}">${years.map(y => `<option${y === v ? ' selected' : ''}>${y}</option>`).join('')}</select>`;
+  const delta = (x, y) => { const p = pct(x, y); return p === null ? '' : `<span class="st-delta ${p >= 0 ? 'up' : 'down'}">${p >= 0 ? '▲' : '▼'} ${Math.abs(p)}%</span>`; };
+  const col = (S, O) => `<div class="st-ycol"><div class="st-ynums"><div><b>${bigNum(S.ms)}</b><small>minutes ${S === A ? delta(A.ms, B.ms) : ''}</small></div><div><b>${S.plays.toLocaleString()}</b><small>plays</small></div><div><b>${S.artists.toLocaleString()}</b><small>artists</small></div></div>
+    <ol>${S.top.slice(0, 5).map(x => `<li>${esc(x.name)}<em>${hm(x.ms)}</em></li>`).join('')}</ol></div>`;
+  return `<section class="st-card wide"><h3>Year vs year</h3><p class="st-sub">${sel('a', a)} compared with ${sel('b', b)}</p>
+    <div class="st-years">${col(A, B)}${col(B, A)}</div>
+    <div class="st-ydiff"><div><h4>Picked up in ${a}</h4><p>${picked.length ? picked.map(x => esc(x.name)).join(', ') : 'Nobody new in your top 15.'}</p></div><div><h4>Dropped since ${b}</h4><p>${dropped.length ? dropped.map(x => esc(x.name)).join(', ') : 'You kept all your favourites.'}</p></div></div></section>`;
 }
 
 /* ---------------- hover tooltip + clicks ---------------- */
@@ -496,10 +661,28 @@ function bind(el) {
     tip.style.transform = `translate(${x}px, ${y}px)`;
   });
   el.addEventListener('mouseleave', () => tip.classList.remove('show'));
+  el.addEventListener('change', e => {
+    const y = e.target.closest('[data-st-year]'); if (!y) return;
+    const a = +el.querySelector('[data-st-year="a"]').value, b = +el.querySelector('[data-st-year="b"]').value;
+    lastYears = [a, b]; const slot = el.querySelector('#stYears'); if (slot) slot.innerHTML = yearsHTML(H.items, a, b);
+  });
   el.addEventListener('click', e => {
     const r = e.target.closest('[data-st-range]'); if (r) { range = r.dataset.stRange; C.store.set('statsRange', range); render(true); return; }
     const imp = e.target.closest('[data-st-import]'); if (imp) { importLastfm(imp); return; }
     const sh = e.target.closest('[data-st-share]'); if (sh) { openShare(sh); return; }
+    if (e.target.closest('[data-st-wrapped]')) { C.openWrapped(); return; }
+    const pt = e.target.closest('[data-st-part]'); if (pt) { partPlaylist(pt.dataset.stPart, pt); return; }
+    const us = e.target.closest('[data-st-unskip]'); if (us) {
+      us.disabled = true;
+      C.removeFromPlaylist(us.dataset.stUnskip, [us.dataset.uri]).then(() => { const box = us.closest('.st-sugg'); us.closest('.st-sugg-row').remove(); if (box && !box.querySelector('.st-sugg-row')) box.remove(); C.toast(`Removed from ${C.playlist(us.dataset.stUnskip)?.name || 'the playlist'}`); })
+        .catch(er => { us.disabled = false; if (!C.needsEditPermission(er)) C.toast(er.message); });
+      return;
+    }
+    const gn = e.target.closest('[data-st-genre]'); if (gn) {
+      const g = lastGenres?.list[+gn.dataset.stGenre]; if (!g?.uris.size) return C.toast('No songs with Spotify IDs in that genre yet.');
+      const u = [...g.uris]; for (let i = u.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [u[i], u[j]] = [u[j], u[i]]; }
+      C.playUris(u.slice(0, 100)); C.toast(`Playing your ${g.other ? 'other genres' : g.name}`); return;
+    }
     const clr = e.target.closest('[data-st-clear]');
     if (clr) {
       if (!clr.dataset.armed) { clr.dataset.armed = '1'; clr.textContent = 'Click again to delete all stats'; setTimeout(() => { clr.dataset.armed = ''; clr.textContent = 'Clear history'; }, 4000); return; }

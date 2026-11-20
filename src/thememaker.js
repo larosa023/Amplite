@@ -94,7 +94,7 @@ export function openThemeMaker(ctx, id) {
     }
     if (e.target.closest('#tmExport')) {
       const data = { amplite: 'theme', version: 1, name: draft.name.trim() || 'My theme', vars: X.deriveTheme(clean(draft.vars)), font: draft.font || undefined, square: draft.square || undefined };
-      X.saveText({ name: `${data.name}.amptheme`, text: JSON.stringify(data, null, 2), kind: 'txt' }).then(r => { if (r?.ok) X.toast('Exported. Send the file to a friend and they can import it.'); });
+      X.saveText({ name: `${data.name}.amptheme`, text: JSON.stringify(data, null, 2), kind: 'amptheme' }).then(r => { if (r?.ok) X.toast('Exported. Send the file to a friend and they can import it.'); });
       return;
     }
     if (e.target.closest('#tmSave')) {

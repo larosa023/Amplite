@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Amplite</title>
+<style>
+  :root { --accent: #1db954; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: transparent; font-family: 'Segoe UI', system-ui, sans-serif; color: #fff; user-select: none; overflow: hidden; }
+  .card { position: absolute; inset: 0; border-radius: 12px; overflow: hidden; background: #15171d; border: 1px solid #ffffff1c; display: flex; flex-direction: column; }
+  .bg { position: absolute; inset: -30%; background: center/cover no-repeat; filter: blur(30px) saturate(1.4) brightness(.45); opacity: .9; }
+  .row { position: relative; display: flex; gap: 12px; align-items: center; padding: 12px 12px 6px; }
+  .art { width: 64px; height: 64px; border-radius: 8px; background: #ffffff14 center/cover no-repeat; flex: none; box-shadow: 0 6px 18px #0007; }
+  .meta { flex: 1; min-width: 0; }
+  .t { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .a { font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .open { border: 0; background: #ffffff14; color: #fff; font: inherit; font-size: 11px; border-radius: 6px; padding: 4px 8px; cursor: pointer; align-self: flex-start; }
+  .open:hover { background: #ffffff26; }
+  .bar { position: relative; height: 3px; margin: 2px 12px 0; background: #ffffff26; border-radius: 2px; overflow: hidden; cursor: pointer; }
+  .bar i { position: absolute; inset: 0; background: #fff; transform-origin: left; transform: scaleX(0); }
+  .ctl { position: relative; display: flex; align-items: center; gap: 6px; padding: 8px 10px 10px; }
+  button.b { border: 0; background: none; color: #fff; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; opacity: .85; }
+  button.b:hover { background: #ffffff1a; opacity: 1; }
+  button.b.play { background: #fff; color: #000; width: 36px; height: 36px; opacity: 1; }
+  button.b.liked { color: var(--accent); }
+  svg { width: 18px; height: 18px; fill: currentColor; }
+  .vol { flex: 1; display: flex; align-items: center; gap: 6px; margin-left: 6px; opacity: .85; }
+  input[type=range] { flex: 1; -webkit-appearance: none; height: 4px; border-radius: 2px; background: #ffffff33; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+</style></head>
+<body><div class="card">
+  <div class="bg" id="bg"></div>
+  <div class="row"><div class="art" id="art"></div><div class="meta"><div class="t" id="t">Nothing playing</div><div class="a" id="a"></div></div><button class="open" id="open" title="Open Amplite">Open</button></div>
+  <div class="bar" id="bar"><i id="fill"></i></div>
+  <div class="ctl">
+    <button class="b" id="like" title="Like"><svg viewBox="0 0 24 24"><path d="M12 21s-7-4.4-9.3-9A5.3 5.3 0 0 1 12 6a5.3 5.3 0 0 1 9.3 6C19 16.6 12 21 12 21z" id="heart"/></svg></button>
+    <button class="b" id="prev" title="Previous"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+    <button class="b play" id="play" title="Play / Pause"><svg viewBox="0 0 24 24" id="pi"><path d="M8 5v14l11-7z"/></svg></button>
+    <button class="b" id="next" title="Next"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+    <div class="vol"><svg viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M4 9v6h4l5 4V5L8 9z"/></svg><input type="range" id="vol" min="0" max="100" aria-label="Volume"></div>
+  </div>
+</div>
+<script>
+  const $ = id => document.getElementById(id);
+  const PLAY = '<path d="M8 5v14l11-7z"/>', PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+  let st = null, at = 0, img = '', volBusy = 0, likeBusy = 0, timer = null;
+  const pos = () => !st?.track ? 0 : Math.min(st.track.duration || 0, st.position + (st.paused ? 0 : Date.now() - at));
+  function draw() {
+    const t = st?.track;
+    $('t').textContent = t?.title || 'Nothing playing'; $('a').textContent = t?.artist || '';
+    if ((t?.image || '') !== img) { img = t?.image || ''; const u = img ? `url("${img.replace(/"/g, '%22')}")` : ''; $('art').style.backgroundImage = u; $('bg').style.backgroundImage = u; }
+    $('pi').innerHTML = st && !st.paused ? PAUSE : PLAY;
+    if (st?.accent) document.documentElement.style.setProperty('--accent', st.accent);
+    $('fill').style.transform = `scaleX(${t?.duration ? Math.min(1, pos() / t.duration) : 0})`;
+    if (typeof st?.volume === 'number' && Date.now() > volBusy) $('vol').value = st.volume;
+    if (Date.now() > likeBusy) $('like').classList.toggle('liked', !!st?.liked);
+  }
+  async function poll() { st = await window.panel.now().catch(() => null); at = Date.now(); draw(); }
+  function start() { clearInterval(timer); poll(); timer = setInterval(() => { if (document.visibilityState === 'visible') { poll(); } }, 1500); }
+  setInterval(draw, 250);
+  const cmd = c => { window.panel.cmd(c); setTimeout(poll, 350); };
+  $('play').onclick = () => { if (st) { st.position = pos(); st.paused = !st.paused; at = Date.now(); draw(); } cmd('toggle'); };
+  $('next').onclick = () => cmd('next'); $('prev').onclick = () => cmd('prev');
+  $('like').onclick = () => { likeBusy = Date.now() + 2500; $('like').classList.toggle('liked'); cmd('like'); };
+  $('vol').oninput = () => { volBusy = Date.now() + 2500; };
+  $('vol').onchange = () => { volBusy = Date.now() + 2500; cmd('vol:=' + $('vol').value); };
+  $('bar').onclick = e => { const r = $('bar').getBoundingClientRect(); if (st?.track?.duration) cmd('seek:=' + Math.round((e.clientX - r.left) / r.width * st.track.duration)); };
+  $('open').onclick = () => window.panel.open();
+  window.panel.onShow(start);
+  start();
+</script>
+</body></html>

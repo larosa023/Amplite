@@ -382,8 +382,8 @@ ipcMain.handle('image-data', async (_e, url) => {
 });
 ipcMain.handle('save-text', async (_e, { name, text, kind } = {}) => {
   if (typeof text !== 'string' || text.length > 20e6) return { ok: false };
-  const ext = kind === 'csv' ? 'csv' : 'txt';
-  const r = await dialog.showSaveDialog(mainWin, { defaultPath: path.join(app.getPath('documents'), String(name || 'Amplite.' + ext).replace(/[\\/:*?"<>|]/g, '')), filters: [{ name: ext === 'csv' ? 'Spreadsheet (CSV)' : 'Text', extensions: [ext] }] });
+  const ext = kind === 'csv' ? 'csv' : kind === 'amptheme' ? 'amptheme' : 'txt';
+  const r = await dialog.showSaveDialog(mainWin, { defaultPath: path.join(app.getPath('documents'), String(name || 'Amplite.' + ext).replace(/[\\/:*?"<>|]/g, '')), filters: [{ name: { csv: 'Spreadsheet (CSV)', amptheme: 'Amplite theme', txt: 'Text' }[ext], extensions: [ext] }] });
   if (r.canceled || !r.filePath) return { ok: false, canceled: true };
   fs.writeFileSync(r.filePath, text, 'utf8'); shell.showItemInFolder(r.filePath);
   return { ok: true, path: r.filePath };
@@ -412,6 +412,7 @@ function trayMenu() {
     { label: 'Previous', click: () => send('prev') },
     { type: 'separator' },
     { label: 'Show Amplite', click: showMain },
+    { label: 'Quick controls', click: () => togglePanel() },
     { label: 'Mini amp', click: () => send('amp') },
     { label: 'Desktop lyrics', type: 'checkbox', checked: !!lyricsWin, click: () => send('desklyrics') },
     ...(lyricsWin && dl.locked ? [{ label: 'Move desktop lyrics…', click: () => send('desklyrics-unlock') }] : []),
@@ -419,13 +420,39 @@ function trayMenu() {
     { label: 'Quit Amplite', click: () => { quitting = true; app.quit(); } },
   ]);
 }
+// Quick panel: a small pop-up above the tray icon with the cover, controls, volume and like.
+let panelWin = null;
+function togglePanel() {
+  if (panelWin && !panelWin.isDestroyed() && panelWin.isVisible()) { panelWin.hide(); return; }
+  if (!panelWin || panelWin.isDestroyed()) {
+    panelWin = new BrowserWindow({ width: 340, height: 132, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false,
+      skipTaskbar: true, alwaysOnTop: true, show: false, backgroundColor: '#00000000',
+      webPreferences: { preload: path.join(__dirname, 'tray-preload.js'), contextIsolation: true, sandbox: true } });
+    panelWin.loadFile(path.join(__dirname, 'src', 'panel.html'));
+    panelWin.on('blur', () => { if (!panelWin.webContents.isDevToolsOpened()) panelWin.hide(); });
+  }
+  const { screen } = require('electron');
+  const tb = tray?.getBounds?.() || { x: 0, y: 0, width: 0, height: 0 };
+  const pt = tb.width ? { x: tb.x + tb.width / 2, y: tb.y + tb.height / 2 } : screen.getCursorScreenPoint();
+  const wa = screen.getDisplayNearestPoint(pt).workArea, W = 340, H = 132;
+  const x = Math.round(Math.min(wa.x + wa.width - W - 8, Math.max(wa.x + 8, pt.x - W / 2)));
+  const y = pt.y > wa.y + wa.height / 2 ? wa.y + wa.height - H - 8 : wa.y + 8; // taskbar at the bottom (usual) or top
+  panelWin.setBounds({ x, y: Math.round(y), width: W, height: H });
+  panelWin.show(); panelWin.focus();
+  panelWin.webContents.send('panel-show');
+}
+ipcMain.handle('panel-now', () => integrations.nowState());
+ipcMain.on('panel-cmd', (_e, c) => { if (API_CMDS.test(String(c))) mainWin?.webContents.send('media', String(c)); });
+ipcMain.on('panel-open', () => { panelWin?.hide(); showMain(); });
 function createTray() {
   try {
     const icon = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')).resize({ width: 16, height: 16 });
     tray = new Tray(icon);
     tray.setToolTip('Amplite');
     tray.setContextMenu(trayMenu());
-    tray.on('click', () => (mainWin?.isVisible() && !mainWin.isMinimized() ? mainWin.hide() : showMain()));
+    // Click: the quick panel. Double-click: show / hide Amplite.
+    tray.on('click', () => togglePanel());
+    tray.on('double-click', () => { panelWin?.hide(); mainWin?.isVisible() && !mainWin.isMinimized() ? mainWin.hide() : showMain(); });
   } catch (e) { console.warn('Tray unavailable', e); }
 }
 ipcMain.on('now-playing', (_e, n = {}) => {
@@ -578,6 +605,8 @@ ipcMain.handle('history', async (_e, action, a = {}) => {
     if (action === 'read') return { ok: true, items: await H.read() };
     if (action === 'append') { H.append((a.items || []).filter(r => r && typeof r.ts === 'number' && typeof r.title === 'string').slice(0, 20000)); return { ok: true }; }
     if (action === 'clear') { H.clear(); return { ok: true }; }
+    if (action === 'skip') { H.skip(a); return { ok: true }; }
+    if (action === 'skips') return { ok: true, items: await H.skips() };
     if (action === 'lastfm') return { ok: true, ...(await H.lastfmPage(a.page || 1)) };
     if (action === 'tags') return { ok: true, tags: await H.tags(a.artist) };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -591,12 +620,19 @@ ipcMain.handle('lastfm', async (_e, action, a = {}) => {
     if (action === 'artist') { if (!L.state().key) return { ok: false, error: 'nokey' }; return { ok: true, artist: await L.artist(String(a.name || '').slice(0, 200)) }; }
     if (action === 'discover') { if (!L.state().key) return { ok: false, error: 'nokey' }; return { ok: true, picks: await L.discover({ seeds: (a.seeds || []).map(String).slice(0, 15), known: (a.known || []).map(String).slice(0, 5000), want: Math.min(60, +a.want || 30) }) }; }
     if (action === 'similar') { if (!L.state().key) return { ok: false, error: 'nokey' }; return { ok: true, similar: await L.similar(a) }; }
+    if (action === 'user') {
+      if (!L.state().key) return { ok: false, error: 'nokey' };
+      const user = a.user === 'me' ? L.state().user : String(a.user || '');
+      if (a.op !== 'friends' && !/^[A-Za-z][A-Za-z0-9_-]{1,14}$/.test(user)) return { ok: false, error: 'That isn’t a Last.fm username.' };
+      if (!['friends', 'info', 'now', 'artists', 'tracks'].includes(a.op)) return { ok: false };
+      return { ok: true, data: await L.user(a.op, user, { period: ['7day', '1month', '3month', '6month', '12month', 'overall'].includes(a.period) ? a.period : undefined, limit: a.limit }) };
+    }
     if (action === 'disconnect') L.disconnect();
     if (action === 'on') L.setOn(a.on);
     return { ok: true, state: L.state() };
   } catch (e) { return { ok: false, error: e.message, state: L.state() }; }
 });
-ipcMain.handle('app-info', () => ({ version: app.getVersion(), packaged: app.isPackaged }));
+ipcMain.handle('app-info', () => ({ version: app.getVersion(), packaged: app.isPackaged, os: `${process.platform} ${process.getSystemVersion?.() || ''} ${process.arch}`, electron: process.versions.electron, mem: Math.round(process.memoryUsage().rss / 1e6) }));
 ipcMain.on('update-check', () => {
   if (!autoUpdater) return sendUpdate('error', { message: app.isPackaged ? 'Updater unavailable' : 'Updates only work in the installed app' });
   autoUpdater.checkForUpdates().catch(e => sendUpdate('error', { message: String(e?.message || e).split('\n')[0] }));
