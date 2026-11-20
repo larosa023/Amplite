@@ -670,19 +670,18 @@ async function startPlayback(body) {
     body = { ...body, uris: body.uris.filter(u => /^spotify:(track|episode):[A-Za-z0-9]+$/.test(u) && !seen.has(u) && seen.add(u)) };
     if (body.offset && 'position' in body.offset) body.offset = { position: Math.max(0, body.uris.indexOf(first)) };
   }
+  // Some accounts' engines refuse plain song lists ("Restriction violated") while playlists play fine.
+  // Once that's been seen, lists go straight through Amplite's own playlist (see playViaPlaylist).
+  if (body.uris && Date.now() - (store.get('uriBlocked', 0) || 0) < 14 * 864e5) {
+    try { return await playViaPlaylist(dev, body); } catch (e) { return fail(e); }
+  }
   try {
     await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body });
     pollSoon(600); pollSoon(1800);
   } catch (e) {
-    // A long list Spotify won't take (one song in it is blocked, or it's too much for the device):
-    // try a shorter one starting at the same song before giving up.
-    if (e.status === 403 && e.reason !== 'PREMIUM_REQUIRED' && body.uris?.length > 1) {
-      const at = body.offset?.position || 0;
-      for (const n of [50, 20, 1]) {
-        if (body.uris.length - at <= n && n !== 1) continue;
-        try { await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body: { uris: body.uris.slice(at, at + n) } }); pollSoon(600); pollSoon(1800); return; }
-        catch (e2) { if (e2.status !== 403) break; }
-      }
+    if (e.status === 403 && e.reason !== 'PREMIUM_REQUIRED' && body.uris?.length) {
+      try { await playViaPlaylist(dev, body); store.set('uriBlocked', Date.now()); return; }
+      catch (e2) { return fail(e2.status ? e2 : e); }
     }
     if (e.status === 404 && useEngine()) {
       // Engine restarted and got a new device id: look it up again and retry once.
@@ -692,6 +691,22 @@ async function startPlayback(body) {
     }
     fail(e);
   }
+}
+// Plays a list of songs as a playlist: Amplite keeps one private playlist ("Amplite queue", hidden
+// from the sidebar) and swaps its songs each time, then plays it like any other playlist.
+async function playViaPlaylist(dev, body) {
+  const uris = body.uris.slice(0, 100), at = Math.min(body.offset?.position || 0, uris.length - 1);
+  let id = store.get('queuePl', '');
+  const fill = () => api(`/playlists/${id}/items`, { method: 'PUT', body: { uris } });
+  try { if (!id) throw Object.assign(new Error('none'), { status: 404 }); await fill(); }
+  catch (e) {
+    if (e.status !== 404 && e.status !== 403) throw e;
+    const pl = await api('/me/playlists', { method: 'POST', body: { name: 'Amplite queue', public: false, description: 'Amplite uses this to play radios and mixes. You can ignore it; Amplite refills it each time.' } });
+    id = pl.id; store.set('queuePl', id); await fill();
+    S.playlists = (S.playlists || []).filter(p => p?.id !== id);
+  }
+  await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body: { context_uri: `spotify:playlist:${id}`, offset: { position: Math.max(0, at) } } });
+  pollSoon(600); pollSoon(1800);
 }
 const playContext = (context_uri, offsetUri) => startPlayback(offsetUri ? { context_uri, offset: { uri: offsetUri } } : { context_uri });
 function playUris(uris, idx = 0) {
@@ -1874,9 +1889,9 @@ async function artistRadio(ar, popular) {
 
 async function loadPlaylists(fresh = false) {
   // A failed load (offline, Spotify busy or rate-limiting) keeps the list you had and tries again later.
-  try { S.playlists = await pageAll('/me/playlists', { limit: 50 }, 300, { fresh }); }
+  try { S.playlists = (await pageAll('/me/playlists', { limit: 50 }, 300, { fresh })).filter(p => !p || p.id !== store.get('queuePl', '')); }
   catch (e) {
-    const stale = swrGet('https://api.spotify.com/v1/me/playlists?limit=50&offset=0')?.items;
+    const stale = swrGet('https://api.spotify.com/v1/me/playlists?limit=50&offset=0')?.items?.filter(p => !p || p.id !== store.get('queuePl', ''));
     if (!S.playlists?.length && stale?.length) S.playlists = stale;
     clearTimeout(S.plRetryT);
     S.plRetryT = setTimeout(() => loadPlaylists(true), Math.max(30000, RL.until - Date.now() + 1000));
