@@ -1,6 +1,13 @@
 // "What's new" after an update: the notes for every version since the one you last saw.
 // Newest first. Each item: [text, optional page to open].
 export const NOTES = {
+  '1.24.0': [
+    ['Stats, Timeline and Wrapped open several times faster with a long history, and Amplite uses less memory'],
+    ['Amplite checks Spotify half as often while its own engine is playing (the engine says when a song changes)'],
+    ['The sidebar is grouped and tighter, and you can hide items you don’t use (right-click one, or Settings → General → Sidebar)'],
+    ['Back and Forward take you to the same spot on the page'],
+    ['A clear outline shows where you are when using the keyboard'],
+  ],
   '1.23.0': [
     ['Amplite Wrapped: your year as a story, with a top 50 playlist and slides you can share', 'wrapped'],
     ['Friends: what your Last.fm friends are playing, and how your taste compares', 'friends:'],

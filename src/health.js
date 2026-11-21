@@ -154,10 +154,10 @@ function draw(progressOnly = false) {
       <div class="hc-tile${tot('dup') ? ' warn' : ''}"><b>${tot('dup')}</b><span>duplicates</span></div>
       <div class="hc-tile${tot('gone') ? ' warn' : ''}"><b>${tot('gone')}</b><span>gone from Spotify</span></div>
       <div class="hc-tile good"><b>${ok.length}</b><span>playlist${ok.length === 1 ? '' : 's'} all good</span></div>
-      ${sick.length > 1 ? `<button class="btn primary" data-hc="everything">Fix everything</button>` : ''}</div>
-    ${sick.length ? sick.map(card).join('') : `<div class="empty small"><p>${X.svg('check')} Every playlist is healthy. Nothing to fix.</p></div>`}
+      ${sick.length > 1 && !H.busy ? `<button class="btn primary" data-hc="everything">Fix everything</button>` : ''}</div>${H.busy ? '<p class="hc-sofar">So far. Still checking the rest…</p>' : ''}
+    ${sick.length ? sick.map(card).join('') : H.busy ? '' : `<div class="empty small"><p>${X.svg('check')} Every playlist is healthy. Nothing to fix.</p></div>`}
     ${many.length ? `<section class="hc-many"><h3>In lots of your playlists</h3><p>Not a problem, just so you know.</p><ol>${many.map(m => `<li><span><b>${X.esc(m.name)}</b> · ${X.esc(m.artist)}</span><em>${m.n} playlists</em></li>`).join('')}</ol></section>` : ''}
-    ${ok.length ? `<details class="hc-ok"><summary>${ok.length} healthy playlist${ok.length === 1 ? '' : 's'}</summary><p>${ok.map(r => `<a data-open="playlist:${X.esc(r.id)}">${X.esc(r.name)}</a>`).join(' · ')}</p></details>` : ''}`;
+    ${ok.length && !H.busy ? `<details class="hc-ok"><summary>${ok.length} healthy playlist${ok.length === 1 ? '' : 's'}</summary><p>${ok.map(r => `<a data-open="playlist:${X.esc(r.id)}">${X.esc(r.name)}</a>`).join(' · ')}</p></details>` : ''}`;
 }
 export function viewHealth(el, ctx, plId) {
   X = ctx;

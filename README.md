@@ -49,9 +49,9 @@ A lightweight Spotify desktop app for Windows, with themes and a mini amp.
 - **Filter, sort and shuffle** Liked Songs and playlists.
 - **System tray** with play/pause/skip, **close to tray**, and **start with Windows** (window, tray or mini amp).
 - **Mini amp snaps** to screen edges and corners and remembers where you put it.
-- **Smooth and fast**: pages that are already cached open instantly with no loading spinner, new pages and images fade in, and Lite mode or Windows' *reduce animations* setting turns the motion off.
+- **Smooth and fast**: your listening history is read once and kept up to date, so Stats, Timeline and Wrapped open quickly even with years of scrobbles. Back and Forward return you to where you were on the page. Pages that are already cached open instantly with no loading spinner, new pages and images fade in, and Lite mode or Windows' *reduce animations* setting turns the motion off.
 - **Fast startup**: your profile, playlists and Home appear instantly from the last session and refresh in the background. Pages start loading when you hover over them.
-- **Collapsible sidebar** (button at the top of the sidebar, or `Ctrl+B`) and a **Lite mode** that turns off effects for lower CPU/GPU use.
+- **Collapsible sidebar** (button at the top of the sidebar, or `Ctrl+B`). Hide sidebar items you don't use by right-clicking them or in Settings → General → Sidebar. and a **Lite mode** that turns off effects for lower CPU/GPU use.
 - **Auto-updates**: Amplite checks GitHub Releases, downloads new versions in the background, and shows a restart button in the title bar. You can also use **Check for updates** in the account menu.
 - **Media keys** (play/pause, next, previous) work even when Amplite isn't focused.
 - Home (recently played and your top tracks), search, Liked Songs, playlists, albums and artists.

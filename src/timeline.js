@@ -131,7 +131,7 @@ export async function viewTimeline(el, ctx, alive) {
     const btn = ev.currentTarget, msg = el.querySelector('#tlImsg'); btn.disabled = true;
     try {
       const { importScrobbles } = await import('./stats.js');
-      const added = await importScrobbles({ store: X.store, alive, say: t => { msg.textContent = t; } });
+      const added = await importScrobbles({ store: X.store, histItems: X.histItems, alive, say: t => { msg.textContent = t; } });
       X.forgetHistory();
       msg.textContent = added ? `Imported ${added.toLocaleString()} plays.` : 'Already up to date.';
       if (added && alive()) setTimeout(() => alive() && X.navigate('timeline', '', false), 800);

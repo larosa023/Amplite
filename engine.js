@@ -126,7 +126,7 @@ class Engine {
         this.send(this.status());
       }
       else if (/connection (to (the )?server )?(was )?(closed|lost|reset)|session (is )?(invalid|lost|closed)|reconnect/i.test(line)) { this.drops = (this.drops || 0) + 1; this.log('!!! Amplite: the engine lost its connection to Spotify (' + this.drops + ' this run)'); }
-      else if (/Loading <.*> with Spotify URI/.test(line)) this.curKeyFailed = false;
+      else if (/Loading <.*> with Spotify URI/.test(line)) { this.curKeyFailed = false; this.loadingAt = Date.now(); this.send({ ...this.status(), loading: this.loadingAt }); } // a new song: the UI refreshes now instead of waiting for its next check
       else if (/<.*> \(\d+ ms\) loaded/.test(line)) { if (!this.curKeyFailed) { this.okTracks++; if (this.okTracks === 1) this.send(this.status()); } }
       else if (/symphonia_bundle_mp3.*(skipping junk|invalid mpeg)/i.test(line)) {
         if (++this.junk === 40) { this.log('!!! Amplite: this track came as an MP3 the engine could not decode (it will be skipped).'); this.keyFail(); }

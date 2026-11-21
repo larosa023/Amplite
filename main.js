@@ -661,6 +661,7 @@ app.whenReady().then(async () => {
   integrations.init(mainWin, send, prefs);
   integrations.onDiscord(s => mainWin?.webContents.send('discord', s));
   integrations.lastfm.onChange(s => mainWin?.webContents.send('lastfm', s));
+  integrations.history.onAdd(recs => mainWin?.webContents.send('history-add', recs));
   globalShortcut.register('MediaPlayPause', () => send('toggle'));
   globalShortcut.register('MediaNextTrack', () => send('next'));
   globalShortcut.register('MediaPreviousTrack', () => send('prev'));

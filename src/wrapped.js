@@ -165,6 +165,12 @@ async function top50(btn) {
     btn.textContent = 'Saved ✓';
   } catch (e) { btn.disabled = false; btn.textContent = t; if (!X.needsEditPermission(e)) X.toast(e.message); }
 }
+function refreshPhotos() {
+  if (!W) return;
+  W.slides = slides(W.d);
+  const s = W.slides[W.i];
+  if (s.id === 'artist' || s.id === 'artists') { const keep = W.elapsed; go(W.i); W.elapsed = keep; }
+}
 export async function openWrapped(ctx, year) {
   X = ctx;
   const items = await X.histItems();
@@ -172,8 +178,9 @@ export async function openWrapped(ctx, year) {
   year = years.includes(year) ? year : years[0];
   if (!year) return X.toast('Play some more music first. Wrapped needs at least 50 plays in a year.');
   const d = crunch(items, year);
-  // Real artist photos for the top artists (Spotify), where Amplite knows their IDs.
-  await Promise.all(d.topA.slice(0, 5).map(async a => { if (a.id) a.image = await X.artistImage(a.id).catch(() => '') || ''; }));
+  // Real artist photos for the top artists (Spotify, where Amplite knows their IDs) load while the
+  // intro plays; slides that are already showing swap them in when they arrive.
+  const photos = d.topA.slice(0, 5).map(a => a.id ? X.artistImage(a.id).then(u => { if (u) { a.image = u; refreshPhotos(); } }).catch(() => {}) : null);
   const el = document.createElement('div'); el.className = 'wr'; el.tabIndex = -1;
   el.innerHTML = `<div class="wr-bg"></div><div class="wr-shade"></div>
     <div class="wr-prog">${slides(d).map(() => '<i></i>').join('')}</div>

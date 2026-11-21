@@ -333,7 +333,10 @@ function commitPlay(t, ms, sync = false) {
     artistIds: t.artistIds || [], album: t.album, albumId: t.albumId || '', image: t.image, duration: t.duration || 0 };
   const line = JSON.stringify(rec) + '\n';
   try { sync ? fs.appendFileSync(file(HIST), line) : fs.appendFile(file(HIST), line, () => {}); } catch {}
+  histListener([rec]);
 }
+// The window keeps the history in memory once it's been read, and is told about every new play.
+let histListener = () => {};
 function readHistory() {
   return new Promise(res => fs.readFile(file(HIST), 'utf8', (e, d) => {
     if (e) return res([]);
@@ -342,8 +345,8 @@ function readHistory() {
     res(out);
   }));
 }
-function appendHistory(recs) { if (recs.length) fs.appendFileSync(file(HIST), recs.map(r => JSON.stringify(r)).join('\n') + '\n'); }
-function clearHistory() { try { fs.unlinkSync(file(HIST)); } catch {} try { fs.unlinkSync(file(SKIPS)); } catch {} }
+function appendHistory(recs) { if (recs.length) { fs.appendFileSync(file(HIST), recs.map(r => JSON.stringify(r)).join('\n') + '\n'); histListener(recs); } }
+function clearHistory() { try { fs.unlinkSync(file(HIST)); } catch {} try { fs.unlinkSync(file(SKIPS)); } catch {} histListener(null); }
 // Skips: songs you pressed Next on early (before 30 s or half the song). Used by Stats.
 const SKIPS = 'skips.jsonl';
 function appendSkip(r) {
@@ -431,7 +434,7 @@ module.exports = {
   init, configure, update, setExtra, nowState,
   discordStatus: () => discord.status, onDiscord: f => { discordListener = f; },
   lastfm: { state: lfmState, similar: lfmSimilar, discover: lfmDiscover, user: lfmUser, artist: lfmArtist, connect: lfmConnect, disconnect: lfmDisconnect, setOn: lfmSetOn, onChange: f => { lfmListener = f; } },
-  history: { read: readHistory, append: appendHistory, clear: clearHistory, skip: appendSkip, skips: readSkips, lastfmPage: lfmRecent, tags: a => lfmPublic('artist.getTopTags', { artist: a }).then(j => (j.toptags?.tag || []).slice(0, 8).map(t => ({ name: t.name, count: +t.count || 0 }))) },
+  history: { read: readHistory, append: appendHistory, clear: clearHistory, skip: appendSkip, skips: readSkips, onAdd: f => { histListener = f; }, lastfmPage: lfmRecent, tags: a => lfmPublic('artist.getTopTags', { artist: a }).then(j => (j.toptags?.tag || []).slice(0, 8).map(t => ({ name: t.name, count: +t.count || 0 }))) },
   shutdown() { try { lfmTick(); commitPlay(held?.track || cur.track, held ? held.listened : lfm.listened, true); held = null; } catch {}
     try { if (discord.sock) { frame(1, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: crypto.randomUUID() }); discord.sock.end(); } } catch {} },
 };

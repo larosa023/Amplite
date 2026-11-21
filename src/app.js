@@ -633,6 +633,7 @@ function initEngine() {
   window.amplite.onEngine(st => {
     const was = S.engine?.state;
     S.engine = st;
+    if (st.loading && st.loading !== S.engineLoading) { S.engineLoading = st.loading; pollSoon(700); }
     if (st.state === 'ready' && was !== 'ready') { S.engineId = null; findEngine(8).then(() => poll()); }
     if (st.state === 'auth' && was !== 'auth') toast('One-time step: approve Amplite in the browser window that just opened.');
     if (st.state === 'error' && was !== 'error') toast('Audio engine problem — see Settings → Audio.');
@@ -959,7 +960,7 @@ async function viewStats(el, _arg, alive) {
   if (!IS_APP) { el.innerHTML = '<div class="pad"><p class="note">Stats are available in the desktop app.</p></div>'; return; }
   const m = await import('./stats.js');
   if (!alive()) return;
-  await m.viewStats(el, { meName: S.me?.display_name || S.me?.id || '', api, bgApi: (p, o = {}) => api(p, { ...o, bg: true }), rateLimited, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive,
+  await m.viewStats(el, { histItems, meName: S.me?.display_name || S.me?.id || '', api, bgApi: (p, o = {}) => api(p, { ...o, bg: true }), rateLimited, store, svg, esc, img, playUris: uris => playUris(uris, 0), alive,
     resolveRec, toast, navigate, needsEditPermission, removeFromPlaylist, queuePl: store.get('queuePl', ''), openWrapped: () => openWrapped(),
     playlist: id => S.playlists?.find(p => p?.id === id), canEdit: id => { const p = S.playlists?.find(x => x?.id === id); return !!p && canEdit(p); },
     savePlaylist: async (name, desc, uris) => { const pl = await api('/me/playlists', { method: 'POST', body: { name, description: desc, public: false } }); await api(`/playlists/${pl.id}/items`, { method: 'POST', body: { uris: uris.slice(0, 100) } }); refreshPlaylists(); return pl; } });
@@ -1009,7 +1010,7 @@ async function viewLibrary(el, _arg, alive) {
 }
 const VIEWS = { friends: async (el, _a, alive) => (await import('./friends.js')).viewFriends(el, { store, esc, svg, toast, api, resolveRec, playUris: u => playUris(u, 0), navigate, refreshPlaylists, needsEditPermission, rateLimited }, alive), timeline: async (el, _a, alive) => (await import('./timeline.js')).viewTimeline(el, {
     histItems, pool, resolveRec, playUris, api, toast, esc, svg, store, navigate, needsEditPermission, refreshPlaylists,
-    forgetHistory: () => { HC.at = 0; HC.items = []; },
+    forgetHistory: () => {},
     searchFor: q => { $('#searchInput').value = q; navigate('search'); } }, alive), health: async (el, arg) => (await import('./health.js')).viewHealth(el, {
     api, pageAll, norm, img, findDuplicates, editablePlaylists, addToPlaylist, removeFromPlaylist, rewritePlaylist, needsEditPermission,
     toast, esc, svg, store, rateLimited, recKey, sameArtist, since: t => sinceStr(t) }, arg), discover: viewDiscover, releases: viewReleases, library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
@@ -1017,7 +1018,10 @@ let navToken = 0;
 
 async function navigate(name, arg = '', push = true) {
   if (!VIEWS[name]) return;
+  // Remember how far down you were, so Back / Forward return you to the same spot.
+  if (S.cur) S.cur.scroll = $('#view').scrollTop;
   if (push && S.cur && !(S.cur.name === name && S.cur.arg === arg)) { S.back.push(S.cur); S.fwd = []; }
+  const restore = push ? 0 : (S.restoreScroll || 0); S.restoreScroll = 0;
   S.cur = { name, arg };
   $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === name));
   $$('.pl-item').forEach(b => b.classList.toggle('active', name === 'playlist' && b.dataset.id === arg));
@@ -1032,10 +1036,14 @@ async function navigate(name, arg = '', push = true) {
   try { await VIEWS[name](el, arg, alive); }
   catch (e) { if (alive()) el.innerHTML = `<div class="empty"><h2>Couldn't load that</h2><p>${esc(e.message)}</p></div>`; }
   clearTimeout(spin);
-  if (alive()) { markPlaying(); el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter'); }
+  if (alive()) {
+    markPlaying();
+    if (restore) { let n = 0; const go = () => { if (!alive()) return; el.scrollTop = restore; if (el.scrollTop < restore - 2 && ++n < 30) requestAnimationFrame(go); }; go(); } // long lists draw in chunks
+    else { el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter'); }
+  }
 }
-function goBack() { if (!S.back.length) return; S.fwd.push(S.cur); const v = S.back.pop(); navigate(v.name, v.arg, false); }
-function goFwd() { if (!S.fwd.length) return; S.back.push(S.cur); const v = S.fwd.pop(); navigate(v.name, v.arg, false); }
+function goBack() { if (!S.back.length) return; S.cur.scroll = $('#view').scrollTop; S.fwd.push(S.cur); const v = S.back.pop(); S.restoreScroll = v.scroll || 0; S.cur = null; navigate(v.name, v.arg, false); }
+function goFwd() { if (!S.fwd.length) return; S.cur.scroll = $('#view').scrollTop; S.back.push(S.cur); const v = S.fwd.pop(); S.restoreScroll = v.scroll || 0; S.cur = null; navigate(v.name, v.arg, false); }
 
 const pinAttr = o => `data-pinfo="${esc(JSON.stringify({ type: o.type, id: o.id, uri: o.uri, name: o.name, image: o.image || '' }))}"`;
 function card({ kind, id, uri, title, sub, image, round }) {
@@ -1121,7 +1129,7 @@ async function recentlyPlayed() {
   if (!IS_APP) return RECENT.uris;
   if (Date.now() - RECENT.at > 5 * 60000) {
     try {
-      const r = await window.amplite.history('read'), since = Date.now() / 1000 - 2 * 86400;
+      const r = { items: await histItems() }, since = Date.now() / 1000 - 2 * 86400;
       RECENT.uris = new Set((r.items || []).filter(x => x.ts >= since && x.uri).map(x => x.uri)); RECENT.at = Date.now();
     } catch {}
   }
@@ -1219,9 +1227,10 @@ async function viewHome(el, _, alive) {
     <section id="hArtists" hidden></section>
     <section id="hRedis" hidden></section>
   </div></div>`;
-  homeFromHistory(alive);
+  // History-based rows come in once the page is up (reading a long history can take a moment).
+  const later = window.requestIdleCallback || (f => setTimeout(f, 200));
+  later(() => { if (!alive()) return; homeFromHistory(alive); wrappedHome(alive); }, { timeout: 1200 });
   dmHome(alive);
-  wrappedHome(alive);
 
   api('/me/player/recently-played', { query: { limit: 50 } }).then(d => {
     if (!alive()) return;
@@ -1424,12 +1433,26 @@ async function viewAlbum(el, id, alive) {
 
 /* ---------------- shared detail helpers ---------------- */
 // Amplite's listening history, cached for a minute (it's read by several pages).
-const HC = { at: 0, items: [], p: null };
+const HC = { items: null, p: null, ver: 0 };
+// Listening history: read from disk once per session (it can be tens of MB), oldest first, then kept
+// up to date as plays are added. Everything (Home, Stats, Timeline, Wrapped …) shares this one copy.
 async function histItems() {
   if (!IS_APP) return [];
-  if (Date.now() - HC.at < 60000) return HC.items;
-  return HC.p ??= window.amplite.history('read').then(r => { HC.items = r.items || []; HC.at = Date.now(); HC.p = null; return HC.items; }).catch(() => { HC.p = null; return HC.items; });
+  if (HC.items) return HC.items;
+  return HC.p ??= window.amplite.history('read').then(r => {
+    const a = r.items || [];
+    for (let i = 1; i < a.length; i++) if (a[i].ts < a[i - 1].ts) { a.sort((x, y) => x.ts - y.ts); break; }
+    HC.items = a; HC.ver++; HC.p = null; return a;
+  }).catch(() => { HC.p = null; return []; });
 }
+if (IS_APP) window.amplite.onHistory?.(recs => {
+  if (recs === null) { HC.items = []; HC.ver++; return; }
+  if (!HC.items || !recs?.length) return;
+  const a = HC.items, last = a.at(-1)?.ts || 0;
+  a.push(...recs);
+  if (recs.some(r => r.ts < last)) a.sort((x, y) => x.ts - y.ts);
+  HC.ver++;
+});
 const longDur = ms => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`; };
 function ago(t) {
   if (!t) return '';
@@ -1747,7 +1770,7 @@ async function setFollow(ar, on, btn) {
 async function artistHistory(name) {
   if (!IS_APP) return null;
   try {
-    const r = await window.amplite.history('read'), k = recKey(name, ''), mine = [], totals = new Map();
+    const r = { items: await histItems() }, k = recKey(name, ''), mine = [], totals = new Map();
     for (const x of r.items || []) {
       const names = x.artists?.length ? x.artists : [x.artist];
       for (const a of names) { if (!a) continue; const kk = recKey(a, ''); totals.set(kk, (totals.get(kk) || 0) + (x.ms || 200000)); }
@@ -2440,7 +2463,7 @@ async function openCoverMaker() {
 const AI = { busy: false, seq: 0, found: [], missing: [], name: '' };
 async function tasteArtists() {
   try {
-    const r = await window.amplite.history('read'), since = Date.now() / 1000 - 90 * 86400, c = new Map();
+    const r = { items: await histItems() }, since = Date.now() / 1000 - 90 * 86400, c = new Map();
     for (const x of r.items || []) if (x.ts >= since) for (const a of (x.artists?.length ? x.artists : [x.artist])) if (a) c.set(a, (c.get(a) || 0) + (x.ms || 200000));
     return [...c.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(x => x[0]);
   } catch { return []; }
@@ -3218,6 +3241,11 @@ function bindCtx() {
   const m = $('#ctxMenu');
   m.addEventListener('click', e => { const b = e.target.closest('[data-ctx]'); if (!b) return; m.classList.add('hidden'); m._items[+b.dataset.ctx].run(); });
   document.addEventListener('contextmenu', e => {
+    const nv = e.target.closest('.nav .nav-item');
+    if (nv && !['home', 'search'].includes(nv.dataset.view)) {
+      e.preventDefault();
+      return showCtx(e, [{ icon: 'minus', label: `Hide ${nv.textContent.trim()} from the sidebar`, run: () => { setK('ui.navHidden', [...new Set([...(CFG.ui.navHidden || []), nv.dataset.view])]); toast(`Hidden. Bring it back in Settings → General → Sidebar.`); } }]);
+    }
     const row = e.target.closest('.trow');
     if (row) {
       e.preventDefault();
@@ -3900,8 +3928,16 @@ function applyAccent() {
   }
   sendExtra();
 }
+function applyNav() {
+  const hid = new Set(CFG.ui.navHidden || []);
+  $$('.nav .nav-item').forEach(b => { b.hidden = hid.has(b.dataset.view); });
+  // A gap only shows when both sides of it still have items.
+  $$('.nav .nav-gap').forEach(g => { const vis = el => { while (el && (el.hidden || el.classList.contains('nav-gap'))) el = el.previousElementSibling; return !!el; };
+    let n = g.nextElementSibling; while (n && n.hidden) n = n.nextElementSibling; g.hidden = !vis(g.previousElementSibling) || !n || n.classList.contains('nav-gap'); });
+}
 function applyUI() {
   applyAccent();
+  applyNav();
   if (IS_APP && S.remoteOn !== !!CFG.ui.remote) { S.remoteOn = !!CFG.ui.remote; applyRemote().then(i => { if (!$('#settings').classList.contains('hidden')) renderRemote(i); }); }
   applyDeskLyrics();
   autoTheme();
@@ -3950,6 +3986,7 @@ function settingsHTML() {
         + sw('ui.dlNext', 'Show the next line', 'Smaller, underneath')) : '')
       + grp('Performance', sw('ui.lite', 'Lite mode', 'Turns off animations, blur and shadows to save CPU/GPU')
         + (IS_APP ? sw('ui.hwAccel', 'Hardware acceleration', 'Turning it off can lower memory use on PCs with weak graphics; uses a bit more CPU (takes effect after restart)') : ''))
+      + grp('Sidebar', `<div class="set-row"><div class="lbl">Items in the sidebar<small>Untick anything you don't use. You can also right-click an item to hide it.</small></div></div><div class="nav-hide" id="navHide"></div>`)
       + grp('Theme', `<div class="theme-list" id="setThemes"></div>`
         + `<div class="set-row"><div class="lbl">Day and night themes<small>Switch themes automatically at the times you pick</small></div><label class="switch ctl"><input type="checkbox" id="taOn" aria-label="Day and night themes"></label></div>
         <div class="set-row ta-row" id="taRow"><div class="lbl">From <input type="time" id="taDayAt"> use <select id="taDay"></select><br>From <input type="time" id="taNightAt"> use <select id="taNight"></select></div></div>`),
@@ -4023,6 +4060,7 @@ function syncControls() {
   const cols = $('#ampColors'); if (cols) cols.hidden = CFG.amp.skin !== 'custom';
   $$('[data-color]', root).forEach(i => { i.value = CFG.amp.colors[i.dataset.color]; });
   $$('#setThemes .theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === S.themeId));
+  if ($('#navHide')) { const hid = new Set(CFG.ui.navHidden || []); $('#navHide').innerHTML = $$('.nav .nav-item').filter(b => !['home', 'search'].includes(b.dataset.view)).map(b => `<label><input type="checkbox" data-nav-show="${esc(b.dataset.view)}" ${hid.has(b.dataset.view) ? '' : 'checked'}>${esc(b.textContent.trim())}</label>`).join(''); }
   const ta = CFG.ui.themeAuto || {}, opts = allThemes().map(([id, n]) => `<option value="${esc(id)}">${esc(n)}</option>`).join('');
   if ($('#taOn')) {
     $('#taOn').checked = !!ta.on; $('#taRow').hidden = !ta.on;
@@ -4146,6 +4184,8 @@ function closeSettings() {
 
 function bindSettings(root) {
   root.addEventListener('change', e => {
+    const ns = e.target.closest('[data-nav-show]');
+    if (ns) { const hid = new Set(CFG.ui.navHidden || []); ns.checked ? hid.delete(ns.dataset.navShow) : hid.add(ns.dataset.navShow); setK('ui.navHidden', [...hid]); return; }
     if (!e.target.closest('#taOn, #taRow')) return;
     const cur = { day: 'snow', night: 'midnight', dayAt: '07:00', nightAt: '19:00', ...(CFG.ui.themeAuto || {}) };
     const v = { ...cur, on: $('#taOn').checked, day: $('#taDay').value || cur.day, night: $('#taNight').value || cur.night, dayAt: $('#taDayAt').value || cur.dayAt, nightAt: $('#taNightAt').value || cur.nightAt };
@@ -4259,7 +4299,9 @@ function bindPrefetch() {
 function schedulePoll() {
   const visible = !mainHidden() || ampOpen();
   const playing = S.now && !S.now.paused;
-  let ms = !visible ? 15000 : playing ? 3000 : 4000;
+  // On Amplite's own engine, song changes are announced by the engine itself, so checking in less often is enough.
+  const onEngine = playing && S.engine?.state === 'ready' && S.now?.device === S.engine?.name;
+  let ms = !visible ? 15000 : onEngine ? 6000 : playing ? 3000 : 4000;
   // Check right when the current song should end, so the next one shows up immediately
   // (only while Spotify is answering; otherwise this would spin every 400 ms).
   if (playing && visible && S.now.duration && Date.now() - (S.pollOkAt || 0) < 10000) ms = Math.min(ms, Math.max(1000, S.now.duration - pos() + 400));

@@ -28,10 +28,11 @@ const pct = (a, b) => b ? Math.round(((a - b) / b) * 100) : null;
 const artistsOf = r => (r.artists?.length ? r.artists : (r.artist ? [r.artist] : [])).filter(Boolean);
 
 /* ---------------- loading history ---------------- */
-async function loadHistory(force) {
-  if (H.items && !force && Date.now() - H.at < 15000) return H.items;
-  const r = await window.amplite.history('read');
-  H = { items: (r.items || []).sort((a, b) => a.ts - b.ts), at: Date.now() };
+// The app keeps one shared, sorted, always-current copy of the history; Stats just uses it.
+let histFn = null;
+async function loadHistory() {
+  const items = histFn ? await histFn() : ((await window.amplite.history('read')).items || []).sort((a, b) => a.ts - b.ts);
+  H = { items, at: Date.now() };
   return H.items;
 }
 const dupe = (have, r) => { // same song within 90 s = the same play (Amplite also scrobbles to Last.fm)
@@ -57,7 +58,8 @@ async function seedFromSpotify() {
 }
 // Pull your whole Last.fm history (up to 200,000 scrobbles), skipping plays Amplite already has.
 // Shared with the Timeline page.
-export async function importScrobbles({ store, alive = () => true, say = () => {} }) {
+export async function importScrobbles({ store, histItems, alive = () => true, say = () => {} }) {
+  if (histItems) histFn = histItems;
   await loadHistory(true);
   const have = indexByTitle(H.items);
   let page = 1, pages = 1, added = 0, seen = 0, total = 0;
@@ -698,7 +700,7 @@ function bind(el) {
 }
 
 export async function viewStats(el, ctx) {
-  C = { ...ctx, el };
+  C = { ...ctx, el }; if (ctx.histItems) histFn = ctx.histItems;
   range = C.store.get('statsRange', 'week');
   if (!RANGES[range]) range = 'week';
   bind(el);
