@@ -1,6 +1,11 @@
 // "What's new" after an update: the notes for every version since the one you last saw.
 // Newest first. Each item: [text, optional page to open].
 export const NOTES = {
+  '1.26.0': [
+    ['New: Looks. Ten whole new designs for Amplite, plus the classic look: Signal, Crate, Nocturne, Marquee, Pulse, Headliner, The Daily Spin, Listening Room, Mosaic and Spotlight. Open the palette button at the top to switch'],
+    ['Each look has its own fonts, sidebar, player and a special Home section (a festival poster of your month, a newspaper front page, a spinning turntable…)'],
+    ['Every look comes in four color palettes, and your custom accent color works on all of them. Pick any theme to go back to the classic look'],
+  ],
   '1.25.0': [
     ['Wrapped is redesigned: big pictures beside the words, your month-by-month listening, your top 5 with how far ahead #1 was, faces of the artists new to you, a pause button (P), and a cleaner summary card'],
     ['Every picture in Wrapped now shows, including songs and artists from your imported Last.fm history (no more grey stars). They’re found on Spotify and remembered'],

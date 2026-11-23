@@ -1,3 +1,4 @@
+import { LOOKS, lookById, fontsUrl, lookStats, paintNp, homeHero } from './looks.js';
 // Amplite — a lightweight Spotify player
 // Pure ES modules, no build step. Auth uses PKCE, so only the public Client ID lives here.
 
@@ -853,6 +854,7 @@ function updatePlayerUI() {
   if (FS.open) { fsTrack(); fsState(); }
   if (CFG.ui.deskLyrics) deskLyricsTick();
   $('#npTitle').textContent = n?.name || 'Nothing playing';
+  lookNp();
   $('#npArtist').innerHTML = n ? artistLinks(n.artists) : (S.deviceId ? 'Ready — pick something to play' : '');
   const art = $('#npArt');
   if ((n?.album?.image || '') !== art.getAttribute('src')) art.setAttribute('src', n?.album?.image || '');
@@ -1266,6 +1268,7 @@ async function viewHome(el, _, alive) {
       ${img(p.images, 64) ? `<img src="${esc(img(p.images, 64))}" alt="">` : `<div class="ph">${svg('music')}</div>`}
       <span class="qname">${esc(p.name)}</span><button class="card-play" data-play="${esc(p.uri)}" title="Play">${svg('play')}</button></div>`));
   el.innerHTML = `<div class="home"><div class="pad">
+    <div id="hLook" class="hlook"></div>
     <h1 class="greet">${greet}${first ? ', ' + esc(first) : ''}</h1>
     <div class="quick">${tiles.join('')}</div>
     <section id="hWrapped" hidden></section>
@@ -1279,6 +1282,8 @@ async function viewHome(el, _, alive) {
   const later = window.requestIdleCallback || (f => setTimeout(f, 200));
   later(() => { if (!alive()) return; homeFromHistory(alive); wrappedHome(alive); }, { timeout: 1200 });
   dmHome(alive);
+  lookHome(alive);
+  $('#hLook')?.addEventListener('click', lookAction);
 
   api('/me/player/recently-played', { query: { limit: 50 } }).then(d => {
     if (!alive()) return;
@@ -3411,6 +3416,82 @@ function applyTheme(id, { save = true } = {}) {
   applyAccent();
   themeToShell();
 }
+/* ---------------- Looks (whole-app redesigns, see looks.js / looks.css) ---------------- */
+const lookPal = id => { const l = lookById(id), i = +store.get('lookPal:' + id, 0) || 0; return l.palettes?.[i] ? i : 0; };
+function lookVarsCss(l, i) {
+  const p = l.palettes[i].v, v = deriveTheme({ bg: p.bg, panel: p.panel, text: p.text, accent: p.accent });
+  const extra = { a2: p.a2, a3: p.a3 || p.a2, a4: p.a4 || p.accent, ink: p.text, paper: p.bg };
+  const fam = (f, fb) => f ? `${f}, ${fb}` : fb;
+  return `html:root[data-look="${l.id}"]{${THEME_KEYS.filter(k => isHex(v[k])).map(k => `--${k}:${v[k]};`).join('')}${Object.entries(extra).map(([k, x]) => `--${k}:${x};`).join('')}`
+    + `--font-ui:${fam(l.ui, '"Segoe UI", system-ui, sans-serif')};--lk-display:${fam(l.display, 'var(--font-ui)')};--lk-mono:${fam(l.mono, 'var(--font-mono)')};}`;
+}
+function applyLook(id, pal, { save = true } = {}) {
+  const l = lookById(id), root = document.documentElement;
+  if (l.id !== 'stock' && pal != null) store.set('lookPal:' + l.id, pal);
+  S.lookId = l.id;
+  let st = $('#lookVars'); if (!st) { st = document.createElement('style'); st.id = 'lookVars'; document.head.append(st); }
+  let fl = $('#lookFont');
+  if (l.id === 'stock') { delete root.dataset.look; st.textContent = ''; fl?.remove(); }
+  else {
+    root.dataset.look = l.id;
+    st.textContent = lookVarsCss(l, lookPal(l.id));
+    const href = fontsUrl(l);
+    if (href) { if (!fl) { fl = document.createElement('link'); fl.id = 'lookFont'; fl.rel = 'stylesheet'; document.head.append(fl); } if (fl.href !== href) fl.href = href; }
+  }
+  if (save) store.set('look', l.id);
+  S.vizGrad = null;
+  themeToShell();
+  renderLooks();
+  lookNp(true);
+  if (S.cur?.name === 'home') lookHome(() => S.cur?.name === 'home');
+}
+function renderLooks() {
+  const cur = S.lookId || 'stock', l = lookById(cur), pi = lookPal(cur);
+  const looks = LOOKS.map(x => `<button class="look-opt${x.id === cur ? ' active' : ''}" data-look="${x.id}" title="${esc(x.blurb)}"><span class="look-prev look-prev-${x.id}" aria-hidden="true"><i></i><i></i><i></i></span><b>${esc(x.name)}</b></button>`).join('');
+  const pals = l.palettes ? `<div class="pop-title look-sub">Colors for ${esc(l.name)}</div><div class="look-pals">${l.palettes.map((p, i) => `<button class="look-pal${i === pi ? ' active' : ''}" data-look-pal="${i}" title="${esc(p.name)}"><span style="background:${p.v.bg}"><i style="background:${p.v.accent}"></i><i style="background:${p.v.a2}"></i></span><em>${esc(p.name)}</em></button>`).join('')}</div>
+    <p class="look-note">Want any color? Pick your own accent in Settings → General.</p>` : '';
+  for (const box of [$('#lookList'), $('#setLooks')].filter(Boolean)) box.innerHTML = `<div class="look-grid">${looks}</div>${pals}`;
+  $('#themePanel')?.classList.toggle('look-on', cur !== 'stock');
+  $('#settings')?.classList.toggle('look-on', cur !== 'stock');
+}
+function lookClick(e) {
+  const p = e.target.closest('[data-look-pal]'); if (p) { applyLook(S.lookId, +p.dataset.lookPal); return true; }
+  const b = e.target.closest('.look-opt[data-look]'); if (b) { applyLook(b.dataset.look); return true; }
+  return false;
+}
+// Now-playing info for the look's Home section (and the album art the looks glow with).
+const LK = { key: '' };
+function lookNp(force) {
+  const n = S.now, key = `${n?.id || ''}|${n?.paused ? 1 : 0}|${S.lookId}`;
+  if (!force && key === LK.key) return;
+  LK.key = key;
+  const artUrl = n?.album?.image || '';
+  document.documentElement.style.setProperty('--np-art', artUrl ? `url("${artUrl.replace(/"/g, '%22')}")` : 'none');
+  paintNp($('#hLook'), n ? { title: n.name, artist: (n.artists || []).map(a => a.name).join(', '), art: artUrl, paused: n.paused } : null);
+}
+async function lookHome(alive) {
+  const box = $('#hLook'); if (!box) return;
+  if (!S.lookId || S.lookId === 'stock') { box.innerHTML = ''; return; }
+  const items = await histItems().catch(() => []);
+  if (!alive() || !$('#hLook')) return;
+  const h = new Date().getHours();
+  const greet = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  $('#hLook').innerHTML = homeHero(S.lookId, { esc, svg, greet, first: S.me?.display_name?.split(' ')[0] || '', st: lookStats(items) });
+  lookNp(true);
+}
+function lookAction(e) {
+  const b = e.target.closest('[data-lk]'); if (!b) return;
+  const a = b.dataset.lk;
+  if (a === 'play') togglePlay(); else if (a === 'next') next(); else if (a === 'prev') prev();
+  else if (a === 'lyrics') openDrawer('lyrics'); else if (a === 'queue') openDrawer('queue'); else if (a === 'full') openFull();
+  else if (a === 'stats' || a === 'discover') navigate(a, '');
+  else if (a === 'artist' && b.dataset.id) navigate('artist', b.dataset.id);
+  else if (a === 'search' || (a === 'artist' && !b.dataset.id)) { $('#searchInput').value = b.dataset.q || ''; navigate('search'); }
+  else if (a === 'song') {
+    if (b.dataset.uri) playUris([b.dataset.uri]);
+    else { const [ar, ...t] = (b.dataset.q || '').split(' '); resolveRec(ar, t.join(' ')).then(r => r?.uri ? playUris([r.uri]) : toast('Couldn’t find that song on Spotify.')); }
+  }
+}
 function themeToShell() {
   if (!IS_APP) return;
   window.amplite.setTheme({ bg: themeColor('bg'), text: themeColor('text') });
@@ -3491,6 +3572,7 @@ function renderThemes() {
     + `<button class="theme-opt theme-new" data-theme-new>${svg('plus')}New theme</button><button class="theme-opt theme-new" data-theme-import>${svg('listadd')}Import…</button>`;
   $('#themeList').innerHTML = html;
   if ($('#setThemes')) $('#setThemes').innerHTML = html;
+  renderLooks();
   applyTheme(S.themeId || store.get('theme', 'midnight'), { save: false });
 }
 async function themeMaker(id) {
@@ -3502,7 +3584,7 @@ function themeClick(e) {
   const ed = e.target.closest('[data-theme-edit]'); if (ed) { e.stopPropagation(); themeMaker(ed.dataset.themeEdit); return true; }
   if (e.target.closest('[data-theme-new]')) { themeMaker(null); return true; }
   if (e.target.closest('[data-theme-import]')) { import('./thememaker.js').then(m => m.importTheme({ store, toast, applyTheme, renderThemes, THEME_KEYS })); return true; }
-  const b = e.target.closest('.theme-opt[data-theme]'); if (b) { applyTheme(b.dataset.theme); return true; }
+  const b = e.target.closest('.theme-opt[data-theme]'); if (b) { if (S.lookId && S.lookId !== 'stock') applyLook('stock'); applyTheme(b.dataset.theme); return true; }
   return false;
 }
 
@@ -3828,6 +3910,7 @@ function bind() {
   $('#themeBtn').onclick = e => { e.stopPropagation(); $('#themePanel').classList.toggle('hidden'); $('#userMenu').classList.add('hidden'); };
   $('#userBtn').onclick = e => { e.stopPropagation(); $('#userMenu').classList.toggle('hidden'); $('#themePanel').classList.add('hidden'); };
   $('#themeList').onclick = themeClick;
+  $('#lookList').onclick = lookClick;
   $('#themePanel').addEventListener('click', e => e.stopPropagation());
 
   // Search
@@ -4039,6 +4122,7 @@ function settingsHTML() {
       + grp('Performance', sw('ui.lite', 'Lite mode', 'Turns off animations, blur and shadows to save CPU/GPU')
         + (IS_APP ? sw('ui.hwAccel', 'Hardware acceleration', 'Turning it off can lower memory use on PCs with weak graphics; uses a bit more CPU (takes effect after restart)') : ''))
       + grp('Sidebar', `<div class="set-row"><div class="lbl">Items in the sidebar<small>Untick anything you don't use. You can also right-click an item to hide it.</small></div></div><div class="nav-hide" id="navHide"></div>`)
+      + grp('Look', `<div class="set-row"><div class="lbl">Look<small>A whole new design for Amplite. Each look has its own colors; “Amplite” is the classic look, where the themes below apply.</small></div></div><div id="setLooks" class="look-box"></div>`)
       + grp('Theme', `<div class="theme-list" id="setThemes"></div>`
         + `<div class="set-row"><div class="lbl">Day and night themes<small>Switch themes automatically at the times you pick</small></div><label class="switch ctl"><input type="checkbox" id="taOn" aria-label="Day and night themes"></label></div>
         <div class="set-row ta-row" id="taRow"><div class="lbl">From <input type="time" id="taDayAt"> use <select id="taDay"></select><br>From <input type="time" id="taNightAt"> use <select id="taNight"></select></div></div>`),
@@ -4220,6 +4304,7 @@ function openSettings(tab = 'general') {
     panes.innerHTML = Object.entries(h).map(([id, html]) => `<div class="set-pane" data-pane="${id}">${html}</div>`).join('');
     $$('[data-logo]', panes).forEach(el => { el.innerHTML = LOGO; });
     $('#setThemes').innerHTML = $('#themeList').innerHTML;
+    renderLooks();
     bindSettings(panes);
   }
   $('#settings').classList.remove('hidden');
@@ -4257,6 +4342,7 @@ function bindSettings(root) {
     const ac = e.target.closest('[data-accent]');
     if (ac) { setK('ui.accent', ac.dataset.accent); applyAmp(); return; }
     if (e.target.closest('#setThemes') && themeClick(e)) { syncControls(); applyAmp(); return; }
+    if (e.target.closest('#setLooks') && lookClick(e)) return;
     if (e.target.closest('#ampReset')) { CFG.amp = clone(AMP_DEFAULTS); store.set('cfg', CFG); applyAmp(); syncControls(); toast('Mini amp reset'); return; }
     if (e.target.closest('#engRestart')) { window.amplite.engineRestart(); toast('Restarting audio engine…'); return; }
     if (e.target.closest('#engRelink')) { window.amplite.engineRestart({ forget: true }); toast('Re-linking — approve Amplite in your browser.'); return; }
@@ -4441,6 +4527,7 @@ async function boot() {
   $$('[data-logo]').forEach(el => { el.innerHTML = LOGO; });
   A.eq.innerHTML = eqHTML(); bindEq(A.eq);
   renderThemes();
+  applyLook(store.get('look', 'stock'), null, { save: false });
   bind();
   applyUI();
   applyAmp();

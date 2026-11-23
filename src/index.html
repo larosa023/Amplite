@@ -7,6 +7,7 @@
   <meta name="description" content="A lightweight Spotify player with themes and a mini amp.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="looks.css">
 </head>
 <body>
   <div class="titlebar"><span class="logo sm" data-logo></span><span>Amplite</span><button id="updBtn" class="upd-pill" title="Check for updates"></button></div>
@@ -139,7 +140,9 @@
 
   <!-- Theme picker -->
   <div id="themePanel" class="popover theme-panel hidden">
-    <div class="pop-title">Theme</div>
+    <div class="pop-title">Look</div>
+    <div id="lookList" class="look-box"></div>
+    <div class="pop-title theme-title">Theme <small>for the Amplite look</small></div>
     <div id="themeList" class="theme-list"></div>
   </div>
 
