@@ -3470,20 +3470,36 @@ function lookNp(force) {
   LK.key = key;
   const artUrl = n?.album?.image || '';
   document.documentElement.style.setProperty('--np-art', artUrl ? `url("${artUrl.replace(/"/g, '%22')}")` : 'none');
-  if (n?.id !== LK.id) { if (LK.id && LK.art) LK.prev = [{ album: { images: [{ url: LK.art, width: 300 }] } }, ...LK.prev].slice(0, 2); LK.id = n?.id || ''; LK.art = artUrl; LK.qFor = ''; }
+  if (n?.id !== LK.id) { if (LK.id && LK.art) LK.prev = [{ uri: LK.uri, album: { images: [{ url: LK.art, width: 300 }] } }, ...LK.prev.filter(x => x.uri !== LK.uri)].slice(0, 2); LK.id = n?.id || ''; LK.uri = n?.uri || ''; LK.art = artUrl; LK.qFor = ''; LK.qKey = ''; }
   const box = lookBox(); if (!box) return;
   paintNp(box, n ? { title: n.name, artist: (n.artists || []).map(a => a.name).join(', '), art: artUrl, paused: n.paused, liked: S.liked, shuffle: n.shuffle, radio: !!CFG.ui.radio } : null);
   if (n && LK.qFor !== n.id) { LK.qFor = n.id; lookQueue(); lookLyrics(); }
-  if (!n) { LK.queue = []; paintQueue(box, [], LK.prev, { img, svg }); paintNp(box, null); }
+  if (!n) { LK.queue = []; paintQueue(box, [], lookPrev(), { img, svg }); paintNp(box, null); }
 }
-function lookQueue() {
+// The queue for the look's Home section: asked for right away (not as a background call, so it
+// isn't held back), retried if Spotify doesn't answer, and refreshed every 20 s so songs you add show up.
+function lookQueue(attempt = 0) {
   const n = S.now; if (!n || !lookBox()?.querySelector('[data-np-q]')) return;
-  api('/me/player/queue', { bg: true }).then(q => {
+  LK.qAt = Date.now();
+  api('/me/player/queue').then(q => {
     const box = lookBox(); if (!box || S.now?.id !== n.id) return;
     LK.queue = (q?.queue || []).filter(t => t && t.uri !== n.uri);
-    paintQueue(box, LK.queue, LK.prev, { img, svg, left: (n.duration || 0) - pos() });
+    const qk = LK.queue.map(t => t.uri).join() + '|' + lookPrev().length;
+    if (qk === LK.qKey && box.querySelector('[data-np-q] > *')) return;
+    LK.qKey = qk;
+    paintQueue(box, LK.queue, lookPrev(), { img, svg, left: (n.duration || 0) - pos() });
     LK.key = ''; lookNp();
-  }).catch(() => {});
+  }).catch(() => { if (attempt < 3) setTimeout(() => { if (S.now?.id === n.id) lookQueue(attempt + 1); }, 2500 * (attempt + 1)); });
+}
+// The two songs before this one: from this session, or else from your play history.
+function lookPrev() {
+  const cur = S.now?.uri, out = [...LK.prev];
+  for (let i = (HC.items?.length || 0) - 1; i >= 0 && out.length < 2; i--) {
+    const r = HC.items[i];
+    if (!r?.uri || r.uri === cur || !/\.scdn\.co\//.test(r.image || '') || out.some(x => x.uri === r.uri)) continue;
+    out.push({ uri: r.uri, album: { images: [{ url: r.image.replace(/(ab67616d0000)(4851|1e02)/, '$1b273'), width: 640 }] } });
+  }
+  return out.slice(0, 2);
 }
 async function lookLyrics() {
   const n = S.now; LK.lines = []; LK.lyrId = n?.id || '';
@@ -3493,6 +3509,7 @@ async function lookLyrics() {
 }
 function lookTick() {
   const box = lookBox(); if (!box) return;
+  if (S.now && Date.now() - (LK.qAt || 0) > 20000 && !document.hidden) lookQueue();
   const n = S.now, d = n?.duration || 0, p = pos();
   let line = '', next = '';
   if (LK.lines.length && LK.lyrId === n?.id) { let i = LK.lines.length - 1; while (i >= 0 && LK.lines[i].t > p + 150) i--; line = LK.lines[i]?.text || (i >= 0 ? '♪' : ''); next = LK.lines[i + 1]?.text || ''; }
@@ -3508,7 +3525,7 @@ async function lookHome(alive) {
   const h = new Date().getHours();
   const greet = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
   $('#hLook').innerHTML = homeHero(S.lookId, { esc, svg, greet, first: S.me?.display_name?.split(' ')[0] || '', st: lookStats(items), albums, playlists: (S.playlists || []).filter(Boolean), me: S.me?.id });
-  LK.qFor = ''; lookNp(true); lookTick();
+  LK.qFor = ''; LK.qKey = ''; lookNp(true); lookTick();
 }
 function lookAction(e) {
   const b = e.target.closest('[data-lk]'); if (!b) return;

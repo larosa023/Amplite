@@ -1,6 +1,11 @@
 // "What's new" after an update: the notes for every version since the one you last saw.
 // Newest first. Each item: [text, optional page to open].
 export const NOTES = {
+  '1.26.3': [
+    ['Listening Room’s shelf now shows your queue, face out. Click a record to jump to it'],
+    ['Spotlight always shows the songs before and after this one, and Coming up refreshes as you add songs'],
+    ['Nocturne drops the rotation row; its Up next column has your queue'],
+  ],
   '1.26.2': [
     ['Spotlight’s Coming up list lines up neatly'],
   ],

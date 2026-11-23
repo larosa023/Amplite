@@ -109,6 +109,7 @@ export function paintQueue(root, q, prev, X) {
       let at = Date.now() + Math.max(0, (X.left || 0));
       html = list.map(t => { const tm = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); at += t.duration_ms || 0; return `<button class="lk-set" data-lk="qplay" data-uri="${e(t.uri)}"><span>${e(tm)}</span><b>${e((t.artists?.[0]?.name || '').toUpperCase())}</b><small>${e(t.name)}</small></button>`; }).join('');
     } else if (kind === 'covers') html = list.map(t => `<button class="lk-qc" data-lk="qplay" data-uri="${e(t.uri)}">${im(big(t))}<span>${e(t.name)} · ${e(t.artists?.[0]?.name || '')}</span></button>`).join('');
+    else if (kind === 'shelf') html = list.map((t, i) => `<button class="lk-rec-out" data-lk="qplay" data-uri="${e(t.uri)}" style="--r:${[-2, 1.5, -1, 2, -1.5, 1, -2.5, 1.5][i % 8]}deg" title="Play ${e(t.name)}">${im(big(t))}<small>${e(t.name)} · ${e(t.artists?.[0]?.name || '')}</small></button>`).join('');
     else if (kind === 'mini') html = list.map(t => `<button class="lk-qm" data-lk="qplay" data-uri="${e(t.uri)}"><span class="lk-qt"><b>${e(t.name)}</b><span>${e(by(t))}</span></span>${im(cover(t))}</button>`).join('');
     box.innerHTML = html;
   });
@@ -164,7 +165,7 @@ export function homeHero(id, X) {
     <div class="lk-npt">${npText('Now playing')}${lyr()}
       <div class="lk-wprog"><span data-np="cur">0:00</span><div class="lk-wave" data-np="bar" aria-hidden="true">${[0, 1].map(k => `<div class="lk-w${k}">${Array.from({ length: 60 }, (_, i) => `<i style="--h:${8 + Math.round(Math.abs(Math.sin(i * 0.61) * Math.cos(i * 0.17)) * 30 + (i % 5) * 1.5)}px"></i>`).join('')}</div>`).join('')}</div><span data-np="dur">0:00</span></div>
       <div class="lk-ctl">${btn('shuffle', 'shuffle', 'Shuffle', 'lk-tog', 'shuffle')}${btn('prev', 'prev', 'Previous')}${playBtn('big')}${btn('next', 'next', 'Next')}<span class="flex1"></span>${btn('like', 'heart', 'Save to Liked Songs', 'lk-tog lk-like lk-ring', 'like')}<button class="lk-tbtn" data-lk="lyrics">Lyrics</button>${btn('full', 'expand', 'Full screen', 'lk-ring')}</div></div></div>
-    ${albums.length ? `<div class="lk-rot"><div class="lk-rot-h"><h2>Your rotation</h2><span>What you keep coming back to</span></div><div class="lk-rot-grid">${albums.slice(0, 6).map(albumCard).join('')}</div></div>` : ''}</div>
+    </div>
     <aside class="lk-upnext"><div class="lk-un-h"><h2>Up next</h2></div><div data-np-q="list" data-n="7"></div>
       <button class="lk-keep" data-lk="radio" data-np="radio"><span><b>Keep the music going</b><small>Similar songs when the queue ends</small></span><i class="lk-sw"></i></button></aside></section>`;
 
@@ -228,7 +229,7 @@ export function homeHero(id, X) {
       <p class="lk-quote lk-lyrics" hidden>“<span data-np="lyr"></span>”</p>
       ${prog('lk-thumb')}
       <div class="lk-ctl round">${btn('prev', 'prev', 'Previous')}${playBtn()}${btn('next', 'next', 'Next')}<span class="flex1"></span><button class="lk-tbtn" data-lk="next">Flip to side B</button>${btn('like', 'heart', 'Save to Liked Songs', 'lk-tog lk-like lk-ring', 'like')}</div></div></div>
-    ${albums.length ? `<div class="lk-shelf-h"><h2>Face out this week</h2><span>records you keep reaching for</span></div><div class="lk-shelf">${albums.slice(0, 8).map((a, i) => `<button class="lk-rec-out" data-lk="album" data-id="${esc(a.id)}" style="--r:${[-2, 1.5, -1, 2, -1.5, 1, -2.5, 1.5][i]}deg"><span class="lk-qa">${a.image ? `<img src="${esc(a.image)}" alt="" loading="lazy">` : ''}</span><small>${esc(a.name)} · ${esc(a.artist)}</small></button>`).join('')}</div>` : ''}</section>`;
+    <div class="lk-shelf-h"><h2>Up next on the turntable</h2><span>your queue, face out</span><button class="lk-tbtn" data-lk="queue">See the whole queue</button></div><div class="lk-shelf" data-np-q="shelf" data-n="8"></div></section>`;
 
   if (id === 'mosaic') return `<section class="lk lk-mosaic">
     <div class="lk-tile lk-t1"><div class="lk-np">${art()}<div class="lk-npt">${npText('Now playing')}</div></div>${prog()}${ctl('', true)}</div>
