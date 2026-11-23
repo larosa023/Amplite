@@ -1042,6 +1042,20 @@ async function navigate(name, arg = '', push = true) {
     else { el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter'); }
   }
 }
+// The same side-button press can arrive both as a mouse click and as a Windows app command; act on whichever comes first.
+const NAVM = { at: 0, src: '' };
+function navFrom(src, d) { const now = Date.now(); if (NAVM.src && NAVM.src !== src && now - NAVM.at < 400) return; NAVM.at = now; NAVM.src = src; navCmd(d); }
+function overlayOpen() { return FS.open || plDialogOpen() || AS.open || !$('#settings').classList.contains('hidden') || !!document.querySelector('.wr, .modal:not(.hidden)'); }
+function navCmd(d) {
+  if (overlayOpen()) { if (d === 'back') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); return; }
+  d === 'back' ? goBack() : goFwd();
+}
+function mouseNav(e) {
+  if (e.button !== 3 && e.button !== 4) return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.type !== 'mouseup') return;
+  navFrom('mouse', e.button === 3 ? 'back' : 'forward');
+}
 function goBack() { if (!S.back.length) return; S.cur.scroll = $('#view').scrollTop; S.fwd.push(S.cur); const v = S.back.pop(); S.restoreScroll = v.scroll || 0; S.cur = null; navigate(v.name, v.arg, false); }
 function goFwd() { if (!S.fwd.length) return; S.cur.scroll = $('#view').scrollTop; S.back.push(S.cur); const v = S.fwd.pop(); S.restoreScroll = v.scroll || 0; S.cur = null; navigate(v.name, v.arg, false); }
 
@@ -3823,6 +3837,10 @@ function bind() {
     if (rr && !e.target.closest('a, button')) { getSelection()?.removeAllRanges(); const t = REC.byPl.get($('#recs')?.dataset.pl)?.picks[+rr.dataset.rec]; if (t) playUris([t.uri], 0); }
   });
   document.addEventListener('keydown', onKey);
+  // Mouse side buttons (and Alt+Left/Right): Back closes an open overlay first, then goes back a page.
+  ['mousedown', 'mouseup', 'auxclick'].forEach(t => window.addEventListener(t, mouseNav, true));
+  if (IS_APP) window.amplite.onNavCmd?.(d => navFrom('cmd', d));
+  document.addEventListener('keydown', e => { if (e.altKey && !e.ctrlKey && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !/INPUT|TEXTAREA/.test(e.target?.tagName || '')) { e.preventDefault(); navCmd(e.key === 'ArrowLeft' ? 'back' : 'forward'); } });
 
   // Mini Amp controls
   ampEl.addEventListener('click', e => {

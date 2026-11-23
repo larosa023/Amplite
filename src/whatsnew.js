@@ -1,6 +1,9 @@
 // "What's new" after an update: the notes for every version since the one you last saw.
 // Newest first. Each item: [text, optional page to open].
 export const NOTES = {
+  '1.24.1': [
+    ['The back and forward buttons on your mouse now go back and forward in Amplite (Alt+Left / Alt+Right work too). Back also closes full screen, Settings or a dialog first'],
+  ],
   '1.24.0': [
     ['Stats, Timeline and Wrapped open several times faster with a long history, and Amplite uses less memory'],
     ['Amplite checks Spotify half as often while its own engine is playing (the engine says when a song changes)'],

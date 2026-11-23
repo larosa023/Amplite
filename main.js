@@ -131,6 +131,8 @@ function createMain() {
   if (b.maximized) mainWin.maximize();
   mainWin.once('ready-to-show', () => { if (startupMode === 'normal') mainWin.show(); });
   // Close to tray: keep playing in the background instead of quitting.
+  // Mice whose drivers send Windows "browser back/forward" commands instead of side-button clicks.
+  mainWin.on('app-command', (_e, cmd) => { if (cmd === 'browser-backward') mainWin.webContents.send('nav-cmd', 'back'); else if (cmd === 'browser-forward') mainWin.webContents.send('nav-cmd', 'forward'); });
   mainWin.on('close', e => { if (prefs.closeToTray && tray && !quitting) { e.preventDefault(); mainWin.hide(); } });
   mainWin.on('resize', saveBounds);
   mainWin.on('move', saveBounds);
