@@ -1,6 +1,9 @@
 // "What's new" after an update: the notes for every version since the one you last saw.
 // Newest first. Each item: [text, optional page to open].
 export const NOTES = {
+  '1.26.2': [
+    ['Spotlight’s Coming up list lines up neatly'],
+  ],
   '1.26.1': [
     ['The looks now match their designs much more closely: live song progress and lyrics, Up Next, Spotlight’s cover carousel, Nocturne’s waveform and rotation, Crate’s up-next side and record spines you can pull, Listening Room’s face-out shelf, Headliner’s set times, Mosaic’s Up Next tile, Signal’s week chart and Made for you blocks, and Daily Spin’s classifieds'],
     ['Shuffle, like and Keep the music going right in each look’s Home section, and stronger album colors in Spotlight'],

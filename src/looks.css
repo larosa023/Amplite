@@ -655,9 +655,12 @@ html[data-look="spotlight"] .play-btn { background:var(--text); color:var(--bg);
 .lk-spotlight .lk-sp-lyr .lk-l1 { font-size:22px; }
 .lk-spotlight .lk-sp-next { width:380px; display:flex; flex-direction:column; align-items:flex-end; gap:8px; margin-left:auto; }
 .lk-spotlight .lk-sp-next .lk-kick { color:color-mix(in srgb, var(--text) 70%, transparent); }
-.lk-qm { display:flex; align-items:center; gap:12px; justify-content:flex-end; text-align:right; max-width:100%; }
-.lk-qm .lk-qt { align-items:flex-end; }
+.lk-spotlight [data-np-q="mini"] { width:100%; display:flex; flex-direction:column; gap:8px; }
+.lk-qm { display:grid; grid-template-columns:minmax(0,1fr) 44px; align-items:center; gap:12px; width:100%; text-align:right; }
+.lk-qm .lk-qt { align-items:flex-end; min-width:0; }
+.lk-qm .lk-qt b, .lk-qm .lk-qt span { max-width:100%; }
 .lk-qm .lk-qa { width:44px; }
+.lk-qm:hover b { color:var(--a2); }
 
 /* smaller windows */
 @media (max-width:1150px) {
