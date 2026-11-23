@@ -1,6 +1,10 @@
 // "What's new" after an update: the notes for every version since the one you last saw.
 // Newest first. Each item: [text, optional page to open].
 export const NOTES = {
+  '1.26.1': [
+    ['The looks now match their designs much more closely: live song progress and lyrics, Up Next, Spotlight’s cover carousel, Nocturne’s waveform and rotation, Crate’s up-next side and record spines you can pull, Listening Room’s face-out shelf, Headliner’s set times, Mosaic’s Up Next tile, Signal’s week chart and Made for you blocks, and Daily Spin’s classifieds'],
+    ['Shuffle, like and Keep the music going right in each look’s Home section, and stronger album colors in Spotlight'],
+  ],
   '1.26.0': [
     ['New: Looks. Ten whole new designs for Amplite, plus the classic look: Signal, Crate, Nocturne, Marquee, Pulse, Headliner, The Daily Spin, Listening Room, Mosaic and Spotlight. Open the palette button at the top to switch'],
     ['Each look has its own fonts, sidebar, player and a special Home section (a festival poster of your month, a newspaper front page, a spinning turntable…)'],

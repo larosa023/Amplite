@@ -1,4 +1,4 @@
-import { LOOKS, lookById, fontsUrl, lookStats, paintNp, homeHero } from './looks.js';
+import { LOOKS, lookById, fontsUrl, lookStats, paintNp, paintTick, paintQueue, homeHero } from './looks.js';
 // Amplite — a lightweight Spotify player
 // Pure ES modules, no build step. Auth uses PKCE, so only the public Client ID lives here.
 
@@ -830,6 +830,7 @@ async function toggleLike() {
   } catch (e) { S.liked = was; renderLike(); toast(e.message); }
 }
 const renderLike = () => {
+  lookNp();
   sendExtra(); fsState();
   $('#likeBtn').classList.toggle('liked', S.liked);
   const al = $('[data-amp="like"]', ampEl);
@@ -927,6 +928,7 @@ function tickBar() {
   if (D.lines.length) tickLyrics();
   if (mainHidden()) return;
   if (FS.open) fsTick();
+  if (S.lookId && S.lookId !== 'stock') lookTick();
   const n = S.now, d = n?.duration || 0, p = pos();
   if (!S.seeking) { setText(TB.cur, fmt(p)); setRange(TB.seek, d ? p / d : 0); }
   setText(TB.dur, fmt(d));
@@ -3460,33 +3462,67 @@ function lookClick(e) {
   return false;
 }
 // Now-playing info for the look's Home section (and the album art the looks glow with).
-const LK = { key: '' };
+const LK = { key: '', id: '', prev: [], queue: [], lines: [], lyrId: '' };
+const lookBox = () => { const b = $('#hLook'); return b?.firstElementChild ? b : null; };
 function lookNp(force) {
-  const n = S.now, key = `${n?.id || ''}|${n?.paused ? 1 : 0}|${S.lookId}`;
+  const n = S.now, key = `${n?.id || ''}|${n?.paused ? 1 : 0}|${S.liked ? 1 : 0}|${n?.shuffle ? 1 : 0}|${CFG.ui.radio ? 1 : 0}|${S.lookId}`;
   if (!force && key === LK.key) return;
   LK.key = key;
   const artUrl = n?.album?.image || '';
   document.documentElement.style.setProperty('--np-art', artUrl ? `url("${artUrl.replace(/"/g, '%22')}")` : 'none');
-  paintNp($('#hLook'), n ? { title: n.name, artist: (n.artists || []).map(a => a.name).join(', '), art: artUrl, paused: n.paused } : null);
+  if (n?.id !== LK.id) { if (LK.id && LK.art) LK.prev = [{ album: { images: [{ url: LK.art, width: 300 }] } }, ...LK.prev].slice(0, 2); LK.id = n?.id || ''; LK.art = artUrl; LK.qFor = ''; }
+  const box = lookBox(); if (!box) return;
+  paintNp(box, n ? { title: n.name, artist: (n.artists || []).map(a => a.name).join(', '), art: artUrl, paused: n.paused, liked: S.liked, shuffle: n.shuffle, radio: !!CFG.ui.radio } : null);
+  if (n && LK.qFor !== n.id) { LK.qFor = n.id; lookQueue(); lookLyrics(); }
+  if (!n) { LK.queue = []; paintQueue(box, [], LK.prev, { img, svg }); paintNp(box, null); }
+}
+function lookQueue() {
+  const n = S.now; if (!n || !lookBox()?.querySelector('[data-np-q]')) return;
+  api('/me/player/queue', { bg: true }).then(q => {
+    const box = lookBox(); if (!box || S.now?.id !== n.id) return;
+    LK.queue = (q?.queue || []).filter(t => t && t.uri !== n.uri);
+    paintQueue(box, LK.queue, LK.prev, { img, svg, left: (n.duration || 0) - pos() });
+    LK.key = ''; lookNp();
+  }).catch(() => {});
+}
+async function lookLyrics() {
+  const n = S.now; LK.lines = []; LK.lyrId = n?.id || '';
+  if (!n || !lookBox()?.querySelector('[data-np="lyr"]')) return;
+  const L = await loadLyrics(n).catch(() => null);
+  if (S.now?.id === n.id) LK.lines = L?.synced || [];
+}
+function lookTick() {
+  const box = lookBox(); if (!box) return;
+  const n = S.now, d = n?.duration || 0, p = pos();
+  let line = '', next = '';
+  if (LK.lines.length && LK.lyrId === n?.id) { let i = LK.lines.length - 1; while (i >= 0 && LK.lines[i].t > p + 150) i--; line = LK.lines[i]?.text || (i >= 0 ? '♪' : ''); next = LK.lines[i + 1]?.text || ''; }
+  paintTick(box, { p, d, line, next });
 }
 async function lookHome(alive) {
   const box = $('#hLook'); if (!box) return;
   if (!S.lookId || S.lookId === 'stock') { box.innerHTML = ''; return; }
-  const items = await histItems().catch(() => []);
+  const [items, rp] = await Promise.all([histItems().catch(() => []), api('/me/player/recently-played', { query: { limit: 50 }, bg: true }).catch(() => null)]);
   if (!alive() || !$('#hLook')) return;
+  const seen = new Set(), albums = [];
+  for (const it of rp?.items || []) { const a = it.track?.album; if (a?.id && !seen.has(a.id)) { seen.add(a.id); albums.push({ id: a.id, name: a.name, artist: (a.artists || []).map(x => x.name).join(', '), image: img(a.images, 300) }); } }
   const h = new Date().getHours();
   const greet = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-  $('#hLook').innerHTML = homeHero(S.lookId, { esc, svg, greet, first: S.me?.display_name?.split(' ')[0] || '', st: lookStats(items) });
-  lookNp(true);
+  $('#hLook').innerHTML = homeHero(S.lookId, { esc, svg, greet, first: S.me?.display_name?.split(' ')[0] || '', st: lookStats(items), albums, playlists: (S.playlists || []).filter(Boolean), me: S.me?.id });
+  LK.qFor = ''; lookNp(true); lookTick();
 }
 function lookAction(e) {
   const b = e.target.closest('[data-lk]'); if (!b) return;
   const a = b.dataset.lk;
   if (a === 'play') togglePlay(); else if (a === 'next') next(); else if (a === 'prev') prev();
+  else if (a === 'shuffle') toggleShuffle(); else if (a === 'like') toggleLike();
+  else if (a === 'radio') { setK('ui.radio', !CFG.ui.radio); lookNp(true); toast(CFG.ui.radio ? 'Keep the music going: on' : 'Keep the music going: off'); }
   else if (a === 'lyrics') openDrawer('lyrics'); else if (a === 'queue') openDrawer('queue'); else if (a === 'full') openFull();
-  else if (a === 'stats' || a === 'discover') navigate(a, '');
+  else if (a === 'wrapped') openWrapped();
+  else if (['stats', 'discover', 'releases', 'timeline'].includes(a)) navigate(a, '');
+  else if ((a === 'album' || a === 'playlist') && b.dataset.id) navigate(a, b.dataset.id);
   else if (a === 'artist' && b.dataset.id) navigate('artist', b.dataset.id);
   else if (a === 'search' || (a === 'artist' && !b.dataset.id)) { $('#searchInput').value = b.dataset.q || ''; navigate('search'); }
+  else if (a === 'qplay') { const i = LK.queue.findIndex(t => t.uri === b.dataset.uri); if (i >= 0) playUris(LK.queue.slice(i).map(t => t.uri)); }
   else if (a === 'song') {
     if (b.dataset.uri) playUris([b.dataset.uri]);
     else { const [ar, ...t] = (b.dataset.q || '').split(' '); resolveRec(ar, t.join(' ')).then(r => r?.uri ? playUris([r.uri]) : toast('Couldn’t find that song on Spotify.')); }
