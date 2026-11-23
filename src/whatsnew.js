@@ -1,6 +1,11 @@
 // "What's new" after an update: the notes for every version since the one you last saw.
 // Newest first. Each item: [text, optional page to open].
 export const NOTES = {
+  '1.25.0': [
+    ['Wrapped is redesigned: big pictures beside the words, your month-by-month listening, your top 5 with how far ahead #1 was, faces of the artists new to you, a pause button (P), and a cleaner summary card'],
+    ['Every picture in Wrapped now shows, including songs and artists from your imported Last.fm history (no more grey stars). They’re found on Spotify and remembered'],
+    ['New Playlists page in the sidebar: all your playlists in a big grid, with Made by you / Followed / Collaborative, a filter, and sort by name, most songs or owner'],
+  ],
   '1.24.1': [
     ['The back and forward buttons on your mouse now go back and forward in Amplite (Alt+Left / Alt+Right work too). Back also closes full screen, Settings or a dialog first'],
   ],

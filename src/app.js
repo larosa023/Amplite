@@ -113,7 +113,7 @@ const ICONS = {
   queue: '<path d="M3 6h13M3 12h13M3 18h9M17 15v6l5-3z"/>',
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>', library: '<path d="M4 4v16M9 4v16"/><path d="m14 4.5 5 15"/>', sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>', phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>', tools: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>', share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', playlists: '<path d="M3 6h13M3 11h13M3 16h8"/><path d="M20 6v10.5"/><circle cx="17.5" cy="16.5" r="2.5"/>', chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>', library: '<path d="M4 4v16M9 4v16"/><path d="m14 4.5 5 15"/>', sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>', phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>', tools: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>', share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>', edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', minus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7"/>', listadd: '<path d="M3 6h12M3 12h12M3 18h7M18 13v8M14 17h8"/>',
 };
 const svg = n => {
@@ -966,6 +966,40 @@ async function viewStats(el, _arg, alive) {
     savePlaylist: async (name, desc, uris) => { const pl = await api('/me/playlists', { method: 'POST', body: { name, description: desc, public: false } }); await api(`/playlists/${pl.id}/items`, { method: 'POST', body: { uris: uris.slice(0, 100) } }); refreshPlaylists(); return pl; } });
 }
 // Library: saved albums and artists you follow.
+// Every playlist you have, as a big grid: filter, sort, and the "made by you / followed" split.
+async function viewPlaylists(el, _arg, alive) {
+  if (!S.playlists?.length) { await loadPlaylists().catch(() => {}); if (!alive()) return; }
+  const all = (S.playlists || []).filter(Boolean);
+  const kinds = { all: () => true, mine: p => p.owner?.id === S.me?.id, followed: p => p.owner?.id !== S.me?.id && !p.collaborative, collab: p => p.collaborative === true };
+  const count = k => all.filter(kinds[k]).length;
+  let tab = store.get('plsTab', 'all'); if (!kinds[tab] || (tab !== 'all' && !count(tab))) tab = 'all';
+  const chip = (k, label) => count(k) || k === 'all' ? `<button class="${tab === k ? 'on' : ''}" data-plstab="${k}">${label} <em>${count(k)}</em></button>` : '';
+  el.innerHTML = `<div class="pad lib pls"><header class="lib-head"><div><h1>Playlists</h1></div>
+      <div class="pls-acts"><button class="btn primary" data-pls="new">${svg('plus')} New playlist</button>${IS_APP ? `<button class="btn ctl" data-pls="ai">${svg('sparkle')} Make one with AI</button>` : ''}<button class="btn ctl" data-pls="health" title="Find songs that won’t play and duplicates">${svg('check')} Health check</button></div></header>
+    <div class="lib-ctl pls-ctl"><div class="seg st-range">${chip('all', 'All')}${chip('mine', 'Made by you')}${chip('followed', 'Followed')}${chip('collab', 'Collaborative')}</div>
+      <span class="flex1"></span><div class="filter-box">${svg('search')}<input id="plsFilter" type="search" placeholder="Filter playlists" autocomplete="off" spellcheck="false"></div>
+      <select id="plsSort" title="Sort"><option value="spotify">Recently played</option><option value="name">Name</option><option value="songs">Most songs</option><option value="owner">Owner</option></select></div>
+    <div class="grid lib-grid" id="plsGrid"></div></div>`;
+  const sortSel = $('#plsSort'); sortSel.value = store.get('plsSort', 'spotify'); if (!sortSel.value) sortSel.value = 'spotify';
+  const n = p => p.items?.total ?? p.tracks?.total ?? 0;
+  const draw = () => {
+    const q = ($('#plsFilter')?.value || '').trim().toLowerCase(), by = sortSel.value;
+    let items = all.filter(kinds[tab]);
+    if (q) items = items.filter(p => `${p.name} ${p.owner?.display_name || ''} ${p.description || ''}`.toLowerCase().includes(q));
+    if (by === 'name') items = [...items].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    else if (by === 'songs') items = [...items].sort((a, b) => n(b) - n(a));
+    else if (by === 'owner') items = [...items].sort((a, b) => (a.owner?.display_name || '').localeCompare(b.owner?.display_name || '') || a.name.localeCompare(b.name));
+    const liked = !q && (tab === 'all' || tab === 'mine') ? `<div class="card" data-open="liked:" ${pinAttr({ type: 'liked', id: '', uri: '', name: 'Liked Songs' })}><div class="art liked-art pls-liked">${svg('heart')}</div><div class="card-title">Liked Songs</div><div class="card-sub">Your saved songs</div></div>` : '';
+    const cards = items.map(p => card({ kind: 'playlist', id: p.id, uri: p.uri, title: p.name, sub: [n(p) ? `${n(p).toLocaleString()} song${n(p) === 1 ? '' : 's'}` : '', p.owner?.id === S.me?.id ? '' : `by ${p.owner?.display_name || 'Spotify'}`].filter(Boolean).join(' · ') || 'Playlist', image: img(p.images, 300) })).join('');
+    $('#plsGrid').innerHTML = liked + cards || `<p class="muted">${q ? 'No playlists match.' : all.length ? 'Nothing here.' : 'Playlists you make or follow in Spotify show up here.'}</p>`;
+  };
+  draw();
+  let ft; $('#plsFilter').addEventListener('input', () => { clearTimeout(ft); ft = setTimeout(draw, 80); });
+  sortSel.onchange = () => { store.set('plsSort', sortSel.value); draw(); };
+  el.querySelector('.pls-ctl').addEventListener('click', e => { const b = e.target.closest('[data-plstab]'); if (b && b.dataset.plstab !== tab) { tab = b.dataset.plstab; store.set('plsTab', tab); el.querySelectorAll('[data-plstab]').forEach(x => x.classList.toggle('on', x === b)); draw(); } });
+  el.querySelector('.pls-acts').addEventListener('click', e => { const b = e.target.closest('[data-pls]'); if (!b) return; const a = b.dataset.pls;
+    if (a === 'new') $('#newPlBtn')?.click(); else if (a === 'ai') $('#aiPlBtn')?.click(); else if (a === 'health') navigate('health', ''); });
+}
 async function viewLibrary(el, _arg, alive) {
   const [albums, artists] = await Promise.all([
     pageAll('/me/albums', { limit: 50 }, 600).catch(() => null),
@@ -1013,7 +1047,7 @@ const VIEWS = { friends: async (el, _a, alive) => (await import('./friends.js'))
     forgetHistory: () => {},
     searchFor: q => { $('#searchInput').value = q; navigate('search'); } }, alive), health: async (el, arg) => (await import('./health.js')).viewHealth(el, {
     api, pageAll, norm, img, findDuplicates, editablePlaylists, addToPlaylist, removeFromPlaylist, rewritePlaylist, needsEditPermission,
-    toast, esc, svg, store, rateLimited, recKey, sameArtist, since: t => sinceStr(t) }, arg), discover: viewDiscover, releases: viewReleases, library: viewLibrary, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
+    toast, esc, svg, store, rateLimited, recKey, sameArtist, since: t => sinceStr(t) }, arg), discover: viewDiscover, releases: viewReleases, library: viewLibrary, playlists: viewPlaylists, home: viewHome, search: viewSearch, liked: viewLiked, playlist: viewPlaylist, album: viewAlbum, artist: viewArtist, stats: viewStats };
 let navToken = 0;
 
 async function navigate(name, arg = '', push = true) {
@@ -2437,7 +2471,7 @@ async function whatsNew(force = false) {
 // ---- Wrapped (lazy-loaded) ----
 async function openWrapped(year) {
   const m = await import('./wrapped.js');
-  m.openWrapped({ histItems, artistImage, resolveRec, api, toast, esc, svg, navigate, refreshPlaylists, needsEditPermission }, year);
+  m.openWrapped({ histItems, artistImage, resolveRec, api, toast, esc, svg, navigate, refreshPlaylists, needsEditPermission, store }, year);
 }
 // Late November to mid January: a "your year is ready" banner on Home.
 async function wrappedHome(alive) {
