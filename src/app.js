@@ -1,4 +1,4 @@
-import { LOOKS, lookById, fontsUrl, lookStats, paintNp, paintTick, paintQueue, homeHero } from './looks.js';
+import { LOOKS, lookById, fontsUrl, lookStats, paintNp, paintTick, paintQueue, paintCarousel, homeHero } from './looks.js';
 // Amplite — a lightweight Spotify player
 // Pure ES modules, no build step. Auth uses PKCE, so only the public Client ID lives here.
 
@@ -3470,9 +3470,11 @@ function lookNp(force) {
   LK.key = key;
   const artUrl = n?.album?.image || '';
   document.documentElement.style.setProperty('--np-art', artUrl ? `url("${artUrl.replace(/"/g, '%22')}")` : 'none');
+  npBg(artUrl);
   if (n?.id !== LK.id) { if (LK.id && LK.art) LK.prev = [{ uri: LK.uri, album: { images: [{ url: LK.art, width: 300 }] } }, ...LK.prev.filter(x => x.uri !== LK.uri)].slice(0, 2); LK.id = n?.id || ''; LK.uri = n?.uri || ''; LK.art = artUrl; LK.qFor = ''; LK.qKey = ''; }
   const box = lookBox(); if (!box) return;
   paintNp(box, n ? { title: n.name, artist: (n.artists || []).map(a => a.name).join(', '), art: artUrl, paused: n.paused, liked: S.liked, shuffle: n.shuffle, radio: !!CFG.ui.radio } : null);
+  lookCarousel();
   if (n && LK.qFor !== n.id) { LK.qFor = n.id; lookQueue(); lookLyrics(); }
   if (!n) { LK.queue = []; paintQueue(box, [], lookPrev(), { img, svg }); paintNp(box, null); }
 }
@@ -3484,12 +3486,34 @@ function lookQueue(attempt = 0) {
   api('/me/player/queue').then(q => {
     const box = lookBox(); if (!box || S.now?.id !== n.id) return;
     LK.queue = (q?.queue || []).filter(t => t && t.uri !== n.uri);
+    lookCarousel();
     const qk = LK.queue.map(t => t.uri).join() + '|' + lookPrev().length;
     if (qk === LK.qKey && box.querySelector('[data-np-q] > *')) return;
     LK.qKey = qk;
     paintQueue(box, LK.queue, lookPrev(), { img, svg, left: (n.duration || 0) - pos() });
     LK.key = ''; lookNp();
   }).catch(() => { if (attempt < 3) setTimeout(() => { if (S.now?.id === n.id) lookQueue(attempt + 1); }, 2500 * (attempt + 1)); });
+}
+function lookCarousel() {
+  const box = lookBox(); if (!box?.querySelector('[data-np-q="carousel"]')) return;
+  const n = S.now;
+  const prev = lookPrev().map(t => ({ uri: t.uri || 'art:' + t.album.images[0].url, art: t.album.images[0].url }));
+  const cur = n ? { uri: n.uri, art: n.album?.image || '', title: n.name } : null;
+  const seen = new Set([n?.uri, ...prev.map(p => p.uri)]);
+  const nx = [];
+  for (const t of LK.queue) { if (nx.length >= 2) break; if (!t?.uri || seen.has(t.uri)) continue; seen.add(t.uri); nx.push({ uri: t.uri, art: img(t.album?.images, 300), title: t.name }); }
+  paintCarousel(box, [prev[1] || null, prev[0] || null, cur, nx[0] || null, nx[1] || null], { svg });
+}
+// The blurred album-art glow behind Nocturne and Spotlight crossfades to the new cover.
+function npBg(url) {
+  let bg = $('#npBg');
+  if (!bg) { bg = document.createElement('div'); bg.id = 'npBg'; bg.setAttribute('aria-hidden', 'true'); bg.innerHTML = '<i></i><i></i>'; $('#app').prepend(bg); }
+  const [a, b] = bg.children, on = a.classList.contains('on') ? a : b, off = on === a ? b : a;
+  if ((on.dataset.u || '') === (url || '')) return;
+  const swap = () => { if (bg.dataset.want !== (url || '')) return; off.dataset.u = url || ''; off.style.backgroundImage = url ? `url("${url.replace(/"/g, '%22')}")` : 'none'; off.classList.add('on'); on.classList.remove('on'); };
+  bg.dataset.want = url || '';
+  if (!url) return swap();
+  const im = new Image(); im.onload = im.onerror = swap; im.src = url;
 }
 // The two songs before this one: from this session, or else from your play history.
 function lookPrev() {

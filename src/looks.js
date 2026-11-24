@@ -66,9 +66,17 @@ const e = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&
 // The now-playing bits inside a signature section update in place when the song changes.
 export function paintNp(root, np) {
   if (!root) return;
-  root.querySelectorAll('[data-np="title"]').forEach(x => { x.textContent = np?.title || 'Nothing playing'; });
-  root.querySelectorAll('[data-np="artist"]').forEach(x => { x.textContent = np?.artist || 'Pick something to play'; });
-  root.querySelectorAll('img[data-np="art"]').forEach(x => { if (np?.art) { if (x.getAttribute('src') !== np.art) x.src = np.art; x.hidden = false; } else { x.removeAttribute('src'); x.hidden = true; } });
+  // A new song fades its words in and its picture over, instead of snapping.
+  const swapText = (x, v) => { if (x.textContent === v) return; const first = !x.textContent; x.textContent = v; if (first) return; x.classList.remove('lk-in'); void x.offsetWidth; x.classList.add('lk-in'); };
+  root.querySelectorAll('[data-np="title"]').forEach(x => swapText(x, np?.title || 'Nothing playing'));
+  root.querySelectorAll('[data-np="artist"]').forEach(x => swapText(x, np?.artist || 'Pick something to play'));
+  root.querySelectorAll('img[data-np="art"]').forEach(x => {
+    if (!np?.art) { x.removeAttribute('src'); x.hidden = true; return; }
+    x.hidden = false;
+    if (x.getAttribute('src') === np.art) return;
+    if (x.getAttribute('src')) { x.classList.add('lk-fade'); x.onload = x.onerror = () => x.classList.remove('lk-fade'); }
+    x.src = np.art;
+  });
   root.querySelectorAll('[data-np="play"]').forEach(x => x.classList.toggle('on', !!np && !np.paused));
   root.querySelectorAll('[data-np="like"]').forEach(x => x.classList.toggle('on', !!np?.liked));
   root.querySelectorAll('[data-np="shuffle"]').forEach(x => x.classList.toggle('on', !!np?.shuffle));
@@ -97,12 +105,8 @@ export function paintQueue(root, q, prev, X) {
   root.querySelectorAll('[data-np-q]').forEach(box => {
     const kind = box.dataset.npQ, n = +box.dataset.n || 5, list = items.slice(0, n);
     let html = '';
-    if (kind === 'carousel') {
-      const nx = items.slice(0, 2);
-      html = `<span class="lk-c lk-cp2">${prev?.[1] ? im(big(prev[1])) : ''}</span><span class="lk-c lk-cp1">${prev?.[0] ? im(big(prev[0])) : ''}</span>`
-        + `<div class="lk-art lk-c0"><img data-np="art" alt="">${ph}</div>`
-        + `<span class="lk-c lk-cn1">${nx[0] ? im(big(nx[0])) : ''}</span><span class="lk-c lk-cn2">${nx[1] ? im(big(nx[1])) : ''}</span>`;
-    } else if (!list.length) html = `<p class="lk-qempty">${kind === 'set' ? 'No more acts announced.' : 'Nothing queued up.'}</p>`;
+    if (kind === 'carousel') return; // see paintCarousel
+    if (!list.length) html = `<p class="lk-qempty">${kind === 'set' ? 'No more acts announced.' : 'Nothing queued up.'}</p>`;
     else if (kind === 'list') html = list.map(t => `<button class="lk-q" data-lk="qplay" data-uri="${e(t.uri)}">${im(cover(t))}<span class="lk-qt"><b>${e(t.name)}</b><span>${e(by(t))}</span></span><small>${fmt(t.duration_ms)}</small></button>`).join('');
     else if (kind === 'side') html = list.map((t, i) => `<button class="lk-li" data-lk="qplay" data-uri="${e(t.uri)}"><em>A${i + 2}</em><b>${e(t.name)}</b><span>${e(by(t))}</span><i></i><small>${fmt(t.duration_ms)}</small></button>`).join('');
     else if (kind === 'set') {
@@ -112,6 +116,35 @@ export function paintQueue(root, q, prev, X) {
     else if (kind === 'shelf') html = list.map((t, i) => `<button class="lk-rec-out" data-lk="qplay" data-uri="${e(t.uri)}" style="--r:${[-2, 1.5, -1, 2, -1.5, 1, -2.5, 1.5][i % 8]}deg" title="Play ${e(t.name)}">${im(big(t))}<small>${e(t.name)} · ${e(t.artists?.[0]?.name || '')}</small></button>`).join('');
     else if (kind === 'mini') html = list.map(t => `<button class="lk-qm" data-lk="qplay" data-uri="${e(t.uri)}"><span class="lk-qt"><b>${e(t.name)}</b><span>${e(by(t))}</span></span>${im(cover(t))}</button>`).join('');
     box.innerHTML = html;
+  });
+}
+
+// Spotlight's carousel: five places (two before, this song, two after). Each cover keeps its own
+// element, keyed by song, so when the song changes every cover glides to its new place.
+export function paintCarousel(root, slots, X) {
+  root?.querySelectorAll('[data-np-q="carousel"]').forEach(box => {
+    const POS = ['p2', 'p1', 'c', 'n1', 'n2'], have = new Map([...box.querySelectorAll('.lk-ci')].map(el => [el.dataset.uri, el])), used = new Set();
+    const ph = `<span class="lk-art-ph">${X.svg('music')}</span>`;
+    slots.forEach((sl, i) => {
+      if (!sl?.uri || used.has(sl.uri)) return; used.add(sl.uri);
+      let el = have.get(sl.uri);
+      if (!el) {
+        el = document.createElement('div'); el.className = 'lk-ci'; el.dataset.uri = sl.uri;
+        el.dataset.pos = i < 2 ? 'p3' : i > 2 ? 'n3' : 'in';
+        el.innerHTML = `<img alt="">${ph}`; box.append(el); void el.offsetWidth;
+      }
+      clearTimeout(el._gone); el.classList.remove('gone');
+      const im = el.querySelector('img');
+      if (sl.art && im.getAttribute('src') !== sl.art) im.src = sl.art;
+      im.hidden = !sl.art;
+      el.dataset.pos = POS[i]; el.title = sl.title || '';
+      have.delete(sl.uri);
+    });
+    for (const el of have.values()) {
+      if (el.classList.contains('gone')) continue;
+      const p = el.dataset.pos; el.dataset.pos = p === 'n1' || p === 'n2' || p === 'n3' ? 'n3' : 'p3';
+      el.classList.add('gone'); el._gone = setTimeout(() => el.remove(), 800);
+    }
   });
 }
 
@@ -241,7 +274,7 @@ export function homeHero(id, X) {
     <div class="lk-tile lk-t5"><span class="lk-kick">Streak</span><b class="lk-num">${st.streak}d</b></div></section>`;
 
   if (id === 'spotlight') return `<section class="lk lk-spotlight">
-    <div class="lk-carousel" data-np-q="carousel">${art('lk-c0')}</div>
+    <div class="lk-carousel" data-np-q="carousel"></div>
     <b class="lk-title" data-np="title"></b><span class="lk-artist" data-np="artist"></span>
     ${prog()}
     ${ctl('big', true)}
