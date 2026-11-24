@@ -160,7 +160,7 @@ html[data-look="marquee"] .nav-item.active { background:none; color:var(--text);
 html[data-look="marquee"] .view h2 { font-family:var(--font-ui); font-weight:700; font-size:19px; }
 html[data-look="marquee"] .lib-head h1, html[data-look="marquee"] .hero h1 { font-weight:400; text-transform:uppercase; letter-spacing:.01em; }
 html[data-look="marquee"] .hero { background:linear-gradient(110deg, var(--bg) 30%, color-mix(in srgb, var(--accent) 35%, var(--bg))); }
-html[data-look="marquee"] .home .grid { grid-auto-flow:column; grid-auto-columns:minmax(170px, 200px); grid-template-columns:none; overflow-x:auto; padding-bottom:10px; scrollbar-width:thin; }
+html[data-look="marquee"] .home .grid { grid-auto-flow:column; grid-auto-columns:minmax(170px, 200px); grid-template-columns:none; overflow-x:auto; padding-bottom:10px; }
 html[data-look="marquee"] .card { background:none; padding:0; transition:transform .2s; }
 html[data-look="marquee"] .card:hover { background:none; transform:scale(1.04); }
 html[data-look="marquee"] .card img, html[data-look="marquee"] .card .ph { border-radius:6px; }
@@ -450,7 +450,7 @@ html[data-look="spotlight"] .play-btn { background:var(--text); color:var(--bg);
 .lk-marquee .lk-prog { margin-top:8px; font-size:11px; gap:8px; }
 .lk-marquee .lk-play { width:46px; height:46px; background:var(--text); color:var(--bg) !important; }
 .lk-mq-row h2 { font-family:var(--font-ui) !important; }
-.lk-mq-art { display:flex; gap:12px; overflow-x:auto; padding-bottom:8px; scrollbar-width:thin; }
+.lk-mq-art { display:flex; gap:12px; overflow-x:auto; padding-bottom:8px; }
 .lk-mq-art button { width:150px; height:150px; flex:none; border-radius:6px; padding:12px; display:flex; align-items:flex-end; text-align:left; font-family:var(--lk-display); text-transform:uppercase; font-size:24px; line-height:.95; transition:transform .2s; }
 .lk-mq-art button:hover { transform:scale(1.04); }
 .lk-mq-art button:nth-child(4n+1) { background:linear-gradient(140deg, color-mix(in srgb, var(--accent) 75%, #000), color-mix(in srgb, var(--accent) 20%, #000)); }
@@ -699,3 +699,7 @@ html.lite .lk-vinyl, html.lite .lk-rec, html.lite .lk-wave i { animation:none !i
 .lk-ci[data-pos="n3"] { transform:translateX(calc(var(--cw) * 1.55)) rotateY(-55deg) scale(.36); z-index:0; opacity:0; }
 html.lite .lk-ci, html.lite #npBg i { transition:none; }
 @media (prefers-reduced-motion: reduce) { .lk-ci, #npBg i, .lk-in { transition:none; animation:none; } }
+/* see-through sidebars: the sticky "Your playlists" header blends in instead of a solid band */
+html[data-look="nocturne"] .side-scroll .side-head, html[data-look="spotlight"] .side-scroll .side-head, html[data-look="room"] .side-scroll .side-head { background:transparent; backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
+html[data-look="pulse"] .side-scroll .side-head, html[data-look="mosaic"] .side-scroll .side-head, html[data-look="headliner"] .side-scroll .side-head, html[data-look="crate"] .side-scroll .side-head { background:var(--panel); }
+html[data-look="signal"] .side-scroll .side-head, html[data-look="marquee"] .side-scroll .side-head, html[data-look="dailyspin"] .side-scroll .side-head { background:var(--bg); }
