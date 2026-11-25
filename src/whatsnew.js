@@ -1,6 +1,9 @@
 // "What's new" after an update: the notes for every version since the one you last saw.
 // Newest first. Each item: [text, optional page to open].
 export const NOTES = {
+  '1.26.6': [
+    ['Shuffle and repeat work everywhere now. When Spotify refuses them (“Restriction violated”), Amplite shuffles what’s coming up and repeats the song itself, without stopping the music'],
+  ],
   '1.26.5': [
     ['Scrollbars blend into every look and theme: slim, see-through and tinted by the look’s colors, with no grey Windows arrows'],
     ['The “Your playlists” header in the sidebar no longer shows a solid band in the see-through looks'],

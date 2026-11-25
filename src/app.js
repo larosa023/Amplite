@@ -409,12 +409,15 @@ async function poll() {
     if (S.deviceId && d.device?.id === S.deviceId) return; // the SDK keeps us in sync
     const t = d.item;
     S.now = {
-      source: 'remote', device: d.device?.name || 'another device', uri: t.uri, id: t.id, name: t.name,
+      source: 'remote', device: d.device?.name || 'another device', deviceId: d.device?.id || null, uri: t.uri, id: t.id, name: t.name,
       artists: (t.artists || []).map(a => ({ name: a.name, id: a.id })),
       album: { name: t.album?.name, id: t.album?.id, image: img(t.album?.images || t.images, 300) },
       duration: t.duration_ms, position: d.progress_ms, paused: !d.is_playing,
       shuffle: d.shuffle_state, repeat: { off: 0, context: 1, track: 2 }[d.repeat_state] ?? 0, ts: performance.now(), context: d.context?.uri || null,
     };
+    const dis = d.actions?.disallows || {};
+    S.now.noShuffle = !!dis.toggling_shuffle; S.now.noRepeat = !!(dis.toggling_repeat_context && dis.toggling_repeat_track);
+    ampOverlay(t);
     if (S.opt && Date.now() < S.opt.until) {
       for (const k of ['paused', 'shuffle', 'repeat']) if (k in S.opt) S.now[k] = S.opt[k];
       if ('position' in S.opt && S.opt.uri === t.uri) S.now.position = S.opt.position + (performance.now() - S.opt.ts);
@@ -684,6 +687,7 @@ const fail = e => {
 
 async function startPlayback(body) {
   activate();
+  S.ampShuf = null; // a new list: Amplite's own shuffle (below) no longer applies
   S.lastPlay = { body, t: Date.now() }; acted();
   const mySeq = S.playSeq = (S.playSeq || 0) + 1;
   const dev = await target();
@@ -730,7 +734,7 @@ async function playViaPlaylist(dev, body) {
     id = pl.id; store.set('queuePl', id); await fill();
     S.playlists = (S.playlists || []).filter(p => p?.id !== id);
   }
-  await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body: { context_uri: `spotify:playlist:${id}`, offset: { position: Math.max(0, at) } } });
+  await api('/me/player/play', { method: 'PUT', query: dev ? { device_id: dev } : undefined, body: { context_uri: `spotify:playlist:${id}`, offset: { position: Math.max(0, at) }, ...(body.position_ms ? { position_ms: body.position_ms } : {}) } });
   pollSoon(600); pollSoon(1800);
 }
 const playContext = (context_uri, offsetUri) => startPlayback(offsetUri ? { context_uri, offset: { uri: offsetUri } } : { context_uri });
@@ -760,11 +764,12 @@ function noteSkip() {
   if (at < Math.min(30000, (n.duration || 60000) * 0.5)) window.amplite.history('skip', { uri: n.uri, title: n.name, artist: n.artists?.map(a => a.name).join(', '), at, ctx: n.context || '' }).catch(() => {});
 }
 async function next() {
-  noteSkip();
+  noteSkip(); S.userSkipAt = Date.now();
   if (isLocal()) return S.player.nextTrack();
   acted(); try { await api('/me/player/next', { method: 'POST' }); pollBurst(); } catch (e) { fail(e); }
 }
 async function prev() {
+  S.userSkipAt = Date.now();
   if (isLocal()) return S.player.previousTrack();
   acted(); try { await api('/me/player/previous', { method: 'POST' }); pollBurst(); } catch (e) { fail(e); }
 }
@@ -777,17 +782,105 @@ async function seek(ms) {
   try { await api('/me/player/seek', { method: 'PUT', query: { position_ms: ms } }); pollSoon(1200); } catch (e) { fail(e); }
 }
 async function stop() { await pause(); await seek(0); if (S.now) { S.now.paused = true; S.opt = { ...S.opt, paused: true }; updatePlayerUI(); } }
+// Shuffle and repeat. Spotify refuses them ("Restriction violated") for some things that are playing —
+// songs started on their own or as a list, and on some devices — so when it does, Amplite does it itself:
+// it shuffles what's coming up and replays it in the new order, and repeats a song by starting it again.
 async function toggleShuffle() {
   if (!S.now) return;
+  if (S.ampShuf || S.now.noShuffle) return ampShuffle(!S.ampShuf);
   const v = !S.now.shuffle, was = S.now.shuffle;
   acted({ shuffle: v }); S.now.shuffle = v; updatePlayerUI();
-  try { await api('/me/player/shuffle', { method: 'PUT', query: { state: v } }); } catch (e) { S.opt = null; S.now.shuffle = was; updatePlayerUI(); fail(e); }
+  try { await api('/me/player/shuffle', { method: 'PUT', query: { state: v } }); }
+  catch (e) {
+    S.opt = null; S.now.shuffle = was; updatePlayerUI();
+    if (e.status === 403 && e.reason !== 'PREMIUM_REQUIRED') return ampShuffle(v);
+    fail(e);
+  }
+}
+// What's coming up after this song: the rest of the playlist or album when Spotify will list it,
+// otherwise the queue Spotify reports.
+async function upcoming() {
+  const n = S.now, ctx = n?.context || '', out = [];
+  try {
+    if (/^spotify:(playlist|album):/.test(ctx)) {
+      const [, kind, id] = ctx.split(':');
+      for (let off = 0; off < 1000; off += kind === 'album' ? 50 : 100) {
+        const r = await api(kind === 'album' ? `/albums/${id}/tracks` : `/playlists/${id}/items`, { query: { limit: kind === 'album' ? 50 : 100, offset: off } });
+        for (const it of r.items || []) { const u = (it.track || it.item || it)?.uri; if (u && /^spotify:(track|episode):/.test(u)) out.push(u); }
+        if (!r.next) break;
+      }
+      const i = out.indexOf(n.uri);
+      if (i >= 0) return out.slice(i + 1);
+    }
+  } catch {}
+  const q = await api('/me/player/queue').catch(() => null);
+  return (q?.queue || []).map(t => t?.uri).filter(u => u && u !== n?.uri);
+}
+// Start a list again on whatever is playing right now (not wherever new music would normally go).
+async function replayHere(body) {
+  const dev = S.now?.deviceId;
+  if (!dev) return startPlayback(body);
+  S.lastPlay = { body, t: Date.now() }; acted();
+  if (Date.now() - (store.get('uriBlocked', 0) || 0) < 14 * 864e5) return playViaPlaylist(dev, body);
+  try { await api('/me/player/play', { method: 'PUT', query: { device_id: dev }, body }); pollSoon(600); pollSoon(1800); }
+  catch (e) {
+    if (e.status !== 403 || e.reason === 'PREMIUM_REQUIRED') throw e;
+    await playViaPlaylist(dev, body); store.set('uriBlocked', Date.now());
+  }
+}
+async function ampShuffle(on) {
+  const n = S.now; if (!n) return;
+  acted({ shuffle: on }); n.shuffle = on; updatePlayerUI();
+  const at = Math.round(pos());
+  try {
+    if (on) {
+      const up = [...new Set(await upcoming())].filter(u => u !== n.uri);
+      if (!up.length) { n.shuffle = false; S.opt = null; updatePlayerUI(); return toast('Nothing coming up to shuffle.'); }
+      const mixed = [...up];
+      for (let i = mixed.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [mixed[i], mixed[j]] = [mixed[j], mixed[i]]; }
+      await replayHere({ uris: [n.uri, ...mixed].slice(0, 100), offset: { position: 0 }, position_ms: at });
+      S.ampShuf = { orig: up, ctx: n.context };
+      toast(`Shuffled the next ${Math.min(up.length, 99)} songs.`);
+    } else {
+      const orig = S.ampShuf?.orig || [];
+      await replayHere({ uris: [n.uri, ...orig.slice(orig.indexOf(n.uri) + 1)].slice(0, 100), offset: { position: 0 }, position_ms: at });
+      S.ampShuf = null;
+    }
+  } catch (e) { S.opt = null; n.shuffle = !on; updatePlayerUI(); fail(e); }
 }
 async function cycleRepeat() {
   if (!S.now) return;
+  if (S.ampRep || S.now.noRepeat) return ampRepeat(!S.ampRep);
   const v = ((S.now.repeat || 0) + 1) % 3, was = S.now.repeat;
   acted({ repeat: v }); S.now.repeat = v; updatePlayerUI();
-  try { await api('/me/player/repeat', { method: 'PUT', query: { state: ['off', 'context', 'track'][v] } }); } catch (e) { S.opt = null; S.now.repeat = was; updatePlayerUI(); fail(e); }
+  try { await api('/me/player/repeat', { method: 'PUT', query: { state: ['off', 'context', 'track'][v] } }); }
+  catch (e) {
+    S.opt = null; S.now.repeat = was; updatePlayerUI();
+    if (e.status === 403 && e.reason !== 'PREMIUM_REQUIRED') return ampRepeat(true);
+    fail(e);
+  }
+}
+function ampRepeat(on) {
+  S.ampRep = on ? S.now?.uri || null : null;
+  if (S.now) S.now.repeat = on ? 2 : 0;
+  updatePlayerUI();
+  if (on && !store.get('ampRepTold')) { store.set('ampRepTold', 1); toast('Repeating this song. Spotify won’t repeat here, so Amplite starts it again for you.'); }
+}
+// Keep the buttons showing Amplite's own shuffle/repeat, and catch a repeated song that ended anyway.
+function ampOverlay(t) {
+  if (S.ampShuf) S.now.shuffle = true;
+  if (S.ampRep) {
+    S.now.repeat = 2;
+    if (t.uri !== S.ampRep) {
+      if (Date.now() - (S.userSkipAt || 0) < 5000) S.ampRep = t.uri; // you skipped: repeat the new song
+      else if (Date.now() - (S.ampRepAt || 0) > 4000) { S.ampRepAt = Date.now(); api('/me/player/previous', { method: 'POST' }).then(() => pollSoon(600)).catch(() => {}); }
+    }
+  }
+}
+// Several times a second: start a repeated song over just before it ends.
+function ampRepeatTick(n, p, d) {
+  if (!S.ampRep || !n || n.paused || n.uri !== S.ampRep || !d) return;
+  if (p >= d - 900 && Date.now() - (S.ampRepAt || 0) > 3000) { S.ampRepAt = Date.now(); seek(0); }
 }
 let volT;
 function setVolume(v) {
@@ -926,6 +1019,7 @@ const TB = {};
 function tickBar() {
   if (!TB.cur) { TB.cur = $('#tCur'); TB.dur = $('#tDur'); TB.seek = $('#seek'); }
   if (D.lines.length) tickLyrics();
+  if (S.ampRep) ampRepeatTick(S.now, pos(), S.now?.duration || 0);
   if (mainHidden()) return;
   if (FS.open) fsTick();
   if (S.lookId && S.lookId !== 'stock') lookTick();
