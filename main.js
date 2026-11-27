@@ -72,7 +72,7 @@ function startServer() {
 // and any web page (they always send an Origin header) are refused, and commands need a custom header
 // that browsers can't send cross-site without permission.
 // eq:on / eq:off / eq:<preset> switch the equalizer (used by Mantel's Now Playing widget).
-const API_CMDS = /^(toggle|next|prev|like|vol:[+-]\d{1,3}|vol:=\d{1,3}|seek:[+-]\d{1,7}|seek:=\d{1,8}|eq:[a-z]{1,16})$/;
+const API_CMDS = /^(toggle|next|prev|like|shuffle|repeat|vol:[+-]\d{1,3}|vol:=\d{1,3}|seek:[+-]\d{1,7}|seek:=\d{1,8}|eq:[a-z]{1,16})$/;
 // The phone remote can't change EQ presets (local apps only).
 const REMOTE_CMDS = /^(toggle|next|prev|like|vol:[+-]\d{1,3}|vol:=\d{1,3}|seek:[+-]\d{1,7}|seek:=\d{1,8})$/;
 function handleApi(req, res, url) {
@@ -273,8 +273,7 @@ function openLyricsWin() {
   lyricsWin.loadURL(`http://127.0.0.1:${PORT}/lyrics.html`);
   lyricsWin.once('ready-to-show', () => { lyricsWin?.showInactive(); applyLyricsLock(); lyricsWin?.webContents.send('dl-style', { ...dl.style, locked: dl.locked }); if (lastLyric) lyricsWin?.webContents.send('dl', lastLyric); });
   lyricsWin.on('moved', saveLyricsBounds); lyricsWin.on('resized', saveLyricsBounds);
-  lyricsWin.on('closed', () => { lyricsWin = null; tray?.setContextMenu(trayMenu()); });
-  tray?.setContextMenu(trayMenu());
+  lyricsWin.on('closed', () => { lyricsWin = null; });
 }
 function applyLyricsLock() { if (lyricsWin && !lyricsWin.isDestroyed()) { lyricsWin.setIgnoreMouseEvents(!!dl.locked, { forward: true }); lyricsWin.setResizable(!dl.locked); } }
 ipcMain.on('desk-lyrics', (_e, p = {}) => { lastLyric = p; lyricsWin?.webContents.send('dl', p); });
@@ -282,7 +281,6 @@ ipcMain.on('desk-lyrics-config', (_e, c = {}) => {
   dl = { locked: !!c.locked, style: { size: c.size, look: c.look, next: c.next, karaoke: c.karaoke, accent: c.accent, font: c.font } };
   if (c.on) { openLyricsWin(); applyLyricsLock(); lyricsWin?.webContents.send('dl-style', { ...dl.style, locked: dl.locked }); }
   else if (lyricsWin) lyricsWin.close();
-  tray?.setContextMenu(trayMenu());
 });
 // The lock button on the lyrics strip itself.
 ipcMain.on('fullscreen', (_e, on) => { if (mainWin && !mainWin.isDestroyed() && mainWin.isFullScreen() !== !!on) mainWin.setFullScreen(!!on); });
@@ -404,30 +402,13 @@ ipcMain.handle('share-image', async (_e, { dataUrl, action, name } = {}) => {
 /* ---------------- tray ---------------- */
 let tray = null, now = { title: '', artist: '', paused: true };
 function showMain() { if (!mainWin) return; mainWin.show(); if (mainWin.isMinimized()) mainWin.restore(); mainWin.focus(); }
-function trayMenu() {
-  const send = cmd => mainWin?.webContents.send('media', cmd);
-  return Menu.buildFromTemplate([
-    { label: now.title ? `${now.title}${now.artist ? ' — ' + now.artist : ''}`.slice(0, 60) : 'Nothing playing', enabled: false },
-    { type: 'separator' },
-    { label: now.paused ? 'Play' : 'Pause', click: () => send('toggle') },
-    { label: 'Next', click: () => send('next') },
-    { label: 'Previous', click: () => send('prev') },
-    { type: 'separator' },
-    { label: 'Show Amplite', click: showMain },
-    { label: 'Quick controls', click: () => togglePanel() },
-    { label: 'Mini amp', click: () => send('amp') },
-    { label: 'Desktop lyrics', type: 'checkbox', checked: !!lyricsWin, click: () => send('desklyrics') },
-    ...(lyricsWin && dl.locked ? [{ label: 'Move desktop lyrics…', click: () => send('desklyrics-unlock') }] : []),
-    { type: 'separator' },
-    { label: 'Quit Amplite', click: () => { quitting = true; app.quit(); } },
-  ]);
-}
 // Quick panel: a small pop-up above the tray icon with the cover, controls, volume and like.
 let panelWin = null;
+const PW = 372, PH = 420;
 function togglePanel() {
   if (panelWin && !panelWin.isDestroyed() && panelWin.isVisible()) { panelWin.hide(); return; }
   if (!panelWin || panelWin.isDestroyed()) {
-    panelWin = new BrowserWindow({ width: 340, height: 132, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false,
+    panelWin = new BrowserWindow({ width: PW, height: PH, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false,
       skipTaskbar: true, alwaysOnTop: true, show: false, backgroundColor: '#00000000',
       webPreferences: { preload: path.join(__dirname, 'tray-preload.js'), contextIsolation: true, sandbox: true } });
     panelWin.loadFile(path.join(__dirname, 'src', 'panel.html'));
@@ -436,14 +417,24 @@ function togglePanel() {
   const { screen } = require('electron');
   const tb = tray?.getBounds?.() || { x: 0, y: 0, width: 0, height: 0 };
   const pt = tb.width ? { x: tb.x + tb.width / 2, y: tb.y + tb.height / 2 } : screen.getCursorScreenPoint();
-  const wa = screen.getDisplayNearestPoint(pt).workArea, W = 340, H = 132;
+  const wa = screen.getDisplayNearestPoint(pt).workArea, W = PW, H = PH;
   const x = Math.round(Math.min(wa.x + wa.width - W - 8, Math.max(wa.x + 8, pt.x - W / 2)));
   const y = pt.y > wa.y + wa.height / 2 ? wa.y + wa.height - H - 8 : wa.y + 8; // taskbar at the bottom (usual) or top
   panelWin.setBounds({ x, y: Math.round(y), width: W, height: H });
   panelWin.show(); panelWin.focus();
   panelWin.webContents.send('panel-show');
 }
-ipcMain.handle('panel-now', () => integrations.nowState());
+ipcMain.handle('panel-now', () => ({ ...integrations.nowState(), desklyrics: !!lyricsWin, dlLocked: !!(lyricsWin && dl.locked), version: app.getVersion() }));
+ipcMain.on('panel-act', (_e, a) => {
+  const send = c => mainWin?.webContents.send('media', c);
+  if (a === 'open') { panelWin?.hide(); showMain(); }
+  else if (a === 'amp') { panelWin?.hide(); send('amp'); }
+  else if (a === 'desklyrics') send('desklyrics');
+  else if (a === 'dlunlock') send('desklyrics-unlock');
+  else if (a === 'settings') { panelWin?.hide(); showMain(); send('settings'); }
+  else if (a === 'hide') panelWin?.hide();
+  else if (a === 'quit') { quitting = true; app.quit(); }
+});
 ipcMain.on('panel-cmd', (_e, c) => { if (API_CMDS.test(String(c))) mainWin?.webContents.send('media', String(c)); });
 ipcMain.on('panel-open', () => { panelWin?.hide(); showMain(); });
 function createTray() {
@@ -451,9 +442,10 @@ function createTray() {
     const icon = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')).resize({ width: 16, height: 16 });
     tray = new Tray(icon);
     tray.setToolTip('Amplite');
-    tray.setContextMenu(trayMenu());
-    // Click: the quick panel. Double-click: show / hide Amplite.
+    // Click or right-click: Amplite's own tray card (styled like the app, unlike a Windows menu).
+    // Double-click: show / hide Amplite.
     tray.on('click', () => togglePanel());
+    tray.on('right-click', () => togglePanel());
     tray.on('double-click', () => { panelWin?.hide(); mainWin?.isVisible() && !mainWin.isMinimized() ? mainWin.hide() : showMain(); });
   } catch (e) { console.warn('Tray unavailable', e); }
 }
@@ -464,7 +456,6 @@ ipcMain.on('now-playing', (_e, n = {}) => {
   if (!changed) return; // position-only update (seek): nothing for the tray
   if (!tray) return;
   tray.setToolTip(now.title ? `${now.paused ? '⏸' : '▶'} ${now.title} — ${now.artist}`.slice(0, 120) : 'Amplite');
-  tray.setContextMenu(trayMenu());
 });
 // Snap the mini amp to screen edges/corners when dropped within 24 px of them, and remember the spot.
 // Snap the mini amp to screen edges/corners when dropped within 24 px of them, and always keep it
@@ -585,12 +576,22 @@ function initUpdater() {
   setTimeout(check, 5000);
   setInterval(check, 4 * 60 * 60 * 1000);
 }
+function trayTheme(t) {
+  if (!t || typeof t !== 'object') return null;
+  const hex = v => /^#[0-9a-f]{6}$/i.test(v || '') ? v : '', fam = v => String(v || '').replace(/[^\w\s,'"-]/g, '').slice(0, 200);
+  const url = /^https:\/\/fonts\.googleapis\.com\/css2\?[\w=&:;@.,+%-]{1,600}$/.test(t.fontUrl || '') ? t.fontUrl : '';
+  return { bg: hex(t.bg), panel: hex(t.panel), elev: hex(t.elev), text: hex(t.text), muted: hex(t.muted), accent: hex(t.accent), onAccent: hex(t.onAccent),
+    font: fam(t.font), display: fam(t.display), fontUrl: url, look: /^[a-z]{1,20}$/.test(t.look || '') ? t.look : 'stock' };
+}
 ipcMain.on('player-extra', (_e, x = {}) => {
   const e = x.eq && typeof x.eq === 'object' ? x.eq : null;
   integrations.setExtra({
     volume: typeof x.volume === 'number' ? x.volume : null,
     accent: /^#[0-9a-f]{6}$/i.test(x.accent || '') ? x.accent : '',
     liked: !!x.liked,
+    shuffle: !!x.shuffle, repeat: [0, 1, 2].includes(x.repeat) ? x.repeat : 0,
+    // The app's current look, so the tray card wears the same colors and fonts.
+    theme: trayTheme(x.theme),
     // Equalizer state + the preset list, so local apps (Mantel) can show and switch presets.
     eq: e ? {
       available: !!e.available, on: !!e.on,

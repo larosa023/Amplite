@@ -1032,10 +1032,16 @@ function sendExtra() {
   if (!IS_APP) return;
   const accent = themeColor('accent');
   const eq = { available: eqAvailable(), on: !!CFG.eq.enabled, preset: CFG.eq.preset || 'custom' };
-  const key = Math.round(S.volume * 100) + accent + JSON.stringify(eq) + (S.liked ? 'L' : '');
+  // The tray card wears the same look and colors as the app.
+  const cs = getComputedStyle(document.documentElement), hex = k => { const v = themeColor(k); return /^#[0-9a-f]{6}$/i.test(v) ? v : ''; };
+  const theme = { bg: hex('bg'), panel: hex('panel'), elev: hex('elev'), text: hex('text'), muted: hex('muted'), accent: hex('accent'), onAccent: hex('on-accent'),
+    font: getComputedStyle(document.body).fontFamily.slice(0, 200), display: cs.getPropertyValue('--lk-display').trim().slice(0, 200),
+    fontUrl: $('#lookFont')?.href || '', look: S.lookId || 'stock' };
+  const n = S.now, play = { shuffle: !!n?.shuffle, repeat: n?.repeat || 0, device: n?.device || '' };
+  const key = Math.round(S.volume * 100) + accent + JSON.stringify(eq) + (S.liked ? 'L' : '') + JSON.stringify(theme) + JSON.stringify(play);
   if (key === S.extraKey) return; S.extraKey = key;
   window.amplite.playerExtra?.({
-    volume: Math.round(S.volume * 100), accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '', liked: !!S.liked,
+    volume: Math.round(S.volume * 100), accent: /^#[0-9a-f]{6}$/i.test(accent) ? accent : '', liked: !!S.liked, theme, ...play,
     eq: { ...eq, presets: Object.entries(EQ_PRESETS).map(([k, [n]]) => [k, n]) },
   });
 }
@@ -3535,7 +3541,7 @@ function applyLook(id, pal, { save = true } = {}) {
     if (href) { if (!fl) { fl = document.createElement('link'); fl.id = 'lookFont'; fl.rel = 'stylesheet'; document.head.append(fl); } if (fl.href !== href) fl.href = href; }
   }
   if (save) store.set('look', l.id);
-  S.vizGrad = null;
+  S.vizGrad = null; S.extraKey = ''; setTimeout(sendExtra, 50);
   themeToShell();
   renderLooks();
   lookNp(true);
@@ -4684,7 +4690,8 @@ async function boot() {
       if (cmd === 'desklyrics') return toggleDeskLyrics();
       if (cmd === 'desklyrics-lock') return setK('ui.dlLocked', true);
       if (cmd === 'desklyrics-unlock') return setK('ui.dlLocked', false);
-      ({ toggle: togglePlay, next, prev, stop, amp: toggleAmp, like: toggleLike })[cmd]?.();
+      if (cmd === 'settings') return openSettings('general');
+      ({ toggle: togglePlay, next, prev, stop, amp: toggleAmp, like: toggleLike, shuffle: toggleShuffle, repeat: cycleRepeat })[cmd]?.();
     });
     window.amplite.onWindowVisible?.(onWinVisibility);
     window.amplite.onDiscord?.(renderDiscord);

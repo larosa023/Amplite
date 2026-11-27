@@ -4,5 +4,6 @@ contextBridge.exposeInMainWorld('panel', {
   now: () => ipcRenderer.invoke('panel-now'),
   cmd: c => ipcRenderer.send('panel-cmd', String(c)),
   open: () => ipcRenderer.send('panel-open'),
+  act: a => ipcRenderer.send('panel-act', String(a)),
   onShow: f => ipcRenderer.on('panel-show', () => f()),
 });

@@ -1,71 +1,255 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'">
 <title>Amplite</title>
 <style>
-  :root { --accent: #1db954; }
+  :root {
+    --bg: #101216; --panel: #171a20; --elev: #20242c; --text: #f2f4f8; --muted: #9aa3b2; --accent: #1db954; --on-accent: #06140b;
+    --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; --display: var(--font);
+    --line: color-mix(in srgb, var(--text) 9%, transparent);
+    --hover: color-mix(in srgb, var(--text) 8%, transparent);
+    --press: color-mix(in srgb, var(--text) 14%, transparent);
+  }
   * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; background: transparent; font-family: 'Segoe UI', system-ui, sans-serif; color: #fff; user-select: none; overflow: hidden; }
-  .card { position: absolute; inset: 0; border-radius: 12px; overflow: hidden; background: #15171d; border: 1px solid #ffffff1c; display: flex; flex-direction: column; }
-  .bg { position: absolute; inset: -30%; background: center/cover no-repeat; filter: blur(30px) saturate(1.4) brightness(.45); opacity: .9; }
-  .row { position: relative; display: flex; gap: 12px; align-items: center; padding: 12px 12px 6px; }
-  .art { width: 64px; height: 64px; border-radius: 8px; background: #ffffff14 center/cover no-repeat; flex: none; box-shadow: 0 6px 18px #0007; }
+  html, body { height: 100%; background: transparent; font-family: var(--font); color: var(--text); user-select: none; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  svg { width: 18px; height: 18px; fill: currentColor; flex: none; }
+  .ln svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+
+  .card { position: absolute; inset: 8px; border-radius: 20px; overflow: hidden; background: var(--bg); border: 1px solid var(--line);
+    box-shadow: 0 18px 48px #0009, 0 2px 8px #0005; display: flex; flex-direction: column;
+    transform-origin: 50% 100%; animation: pop .26s cubic-bezier(.2,.9,.25,1.1) both; }
+  .card.again { animation: none; }
+  @keyframes pop { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+
+  /* header: the cover, blurred, fading into the card */
+  .hero { position: relative; padding: 12px 14px 12px; overflow: hidden; }
+  .glow { position: absolute; inset: -40px; background: center/cover no-repeat; filter: blur(38px) saturate(1.5); opacity: .55; transition: opacity .5s; }
+  .glow.off { opacity: 0; }
+  .hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 30%, transparent), var(--bg) 86%); pointer-events: none; }
+  .hero > *:not(.glow) { position: relative; z-index: 1; }
+  .top { display: flex; align-items: center; gap: 8px; height: 28px; }
+  .mark { width: 22px; height: 22px; }
+  .mark svg { width: 22px; height: 22px; }
+  .word { font-family: var(--display); font-weight: 800; font-size: 14px; letter-spacing: -.01em; }
+  .pill { margin-left: auto; display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px; background: var(--hover); color: var(--muted); font-size: 11px; font-weight: 600; max-width: 170px; }
+  .pill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .eq { display: flex; gap: 2px; align-items: flex-end; height: 10px; }
+  .eq i { width: 2px; border-radius: 1px; background: var(--accent); height: 3px; }
+  .on .eq i { animation: bounce .9s ease-in-out infinite; }
+  .eq i:nth-child(2) { animation-delay: -.3s !important; } .eq i:nth-child(3) { animation-delay: -.6s !important; }
+  @keyframes bounce { 0%, 100% { height: 3px; } 50% { height: 10px; } }
+  .x { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); }
+  .x:hover { background: var(--hover); color: var(--text); }
+  .x svg { width: 14px; height: 14px; }
+
+  .np { display: flex; gap: 14px; align-items: center; margin-top: 14px; }
+  .art { position: relative; width: 92px; height: 92px; border-radius: 14px; flex: none; background: var(--elev); overflow: hidden; box-shadow: 0 12px 28px #0008; cursor: pointer; }
+  .art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .35s; }
+  .art img.on { opacity: 1; }
+  .art .ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+  .art .ph svg { width: 34px; height: 34px; opacity: .6; }
   .meta { flex: 1; min-width: 0; }
-  .t { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .a { font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
-  .open { border: 0; background: #ffffff14; color: #fff; font: inherit; font-size: 11px; border-radius: 6px; padding: 4px 8px; cursor: pointer; align-self: flex-start; }
-  .open:hover { background: #ffffff26; }
-  .bar { position: relative; height: 3px; margin: 2px 12px 0; background: #ffffff26; border-radius: 2px; overflow: hidden; cursor: pointer; }
-  .bar i { position: absolute; inset: 0; background: #fff; transform-origin: left; transform: scaleX(0); }
-  .ctl { position: relative; display: flex; align-items: center; gap: 6px; padding: 8px 10px 10px; }
-  button.b { border: 0; background: none; color: #fff; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; opacity: .85; }
-  button.b:hover { background: #ffffff1a; opacity: 1; }
-  button.b.play { background: #fff; color: #000; width: 36px; height: 36px; opacity: 1; }
-  button.b.liked { color: var(--accent); }
-  svg { width: 18px; height: 18px; fill: currentColor; }
-  .vol { flex: 1; display: flex; align-items: center; gap: 6px; margin-left: 6px; opacity: .85; }
-  input[type=range] { flex: 1; -webkit-appearance: none; height: 4px; border-radius: 2px; background: #ffffff33; }
-  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+  .kick { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+  .t { font-family: var(--display); font-weight: 800; font-size: 19px; line-height: 1.15; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+  .a { font-size: 13px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fade { animation: fade .3s ease both; }
+  @keyframes fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+  .like { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); align-self: flex-start; margin-top: 18px; transition: color .2s, transform .2s; }
+  .like:hover { background: var(--hover); color: var(--text); }
+  .like.liked { color: var(--accent); }
+  .like.pulse { transform: scale(1.25); }
+  .like path { fill: none; stroke: currentColor; stroke-width: 2; }
+  .like.liked path { fill: currentColor; }
+
+  /* progress */
+  .prog { padding: 2px 16px 0; }
+  .bar { position: relative; height: 16px; display: flex; align-items: center; cursor: pointer; }
+  .bar .tr { position: absolute; left: 0; right: 0; height: 4px; border-radius: 2px; background: var(--press); overflow: hidden; }
+  .bar .fi { position: absolute; inset: 0; background: var(--text); border-radius: 2px; transform-origin: left; transform: scaleX(0); }
+  .bar:hover .fi { background: var(--accent); }
+  .bar .th { position: absolute; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px #0007; opacity: 0; transform: scale(.5); transition: opacity .15s, transform .15s; }
+  .bar:hover .th { opacity: 1; transform: none; }
+  .times { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 1px; }
+
+  /* transport */
+  .ctl { display: flex; align-items: center; justify-content: space-between; padding: 6px 22px 4px; }
+  .b { position: relative; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; color: var(--text); transition: background .15s, transform .1s; }
+  .b:hover { background: var(--hover); }
+  .b:active { transform: scale(.92); }
+  .b.sm { color: var(--muted); }
+  .b.sm:hover { color: var(--text); }
+  .b.sm.act { color: var(--accent); }
+  .b.sm.act::after { content: ''; position: absolute; bottom: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; }
+  .b .one { position: absolute; top: 6px; right: 5px; font-size: 8px; font-weight: 800; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: none; place-items: center; }
+  .b.r2 .one { display: grid; }
+  .b.play { width: 54px; height: 54px; background: var(--accent); color: var(--on-accent); box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 40%, transparent); }
+  .b.play:hover { background: var(--accent); filter: brightness(1.08); transform: scale(1.04); }
+  .b.play svg { width: 22px; height: 22px; }
+
+  /* volume */
+  .vol { display: flex; align-items: center; gap: 10px; padding: 4px 18px 12px; color: var(--muted); }
+  .vol .vi { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); }
+  .vol .vi:hover { background: var(--hover); color: var(--text); }
+  .vol .vi svg { width: 16px; height: 16px; }
+  input[type=range] { flex: 1; -webkit-appearance: none; height: 16px; background: transparent; cursor: pointer; --p: 50%; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--text) var(--p), var(--press) var(--p)); }
+  input[type=range]:hover::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--accent) var(--p), var(--press) var(--p)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px #0007; }
+  .vn { width: 30px; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+  /* shortcuts */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 0 12px; }
+  .tile { height: 62px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--muted); transition: background .15s, color .15s, border-color .15s; }
+  .tile:hover { background: var(--elev); color: var(--text); }
+  .tile svg { width: 19px; height: 19px; }
+  .tile.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+  .foot { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+  .foot .k { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .quit { margin-left: auto; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .quit svg { width: 15px; height: 15px; }
+  .quit:hover { background: #e5484d22; color: #ff6b6f; }
 </style></head>
-<body><div class="card">
-  <div class="bg" id="bg"></div>
-  <div class="row"><div class="art" id="art"></div><div class="meta"><div class="t" id="t">Nothing playing</div><div class="a" id="a"></div></div><button class="open" id="open" title="Open Amplite">Open</button></div>
-  <div class="bar" id="bar"><i id="fill"></i></div>
+<body>
+<div class="card" id="card">
+  <section class="hero">
+    <div class="glow" id="g1"></div><div class="glow off" id="g2"></div>
+    <div class="top">
+      <span class="mark" id="mark"></span><span class="word">amplite</span>
+      <span class="pill" id="pill"><span class="eq"><i></i><i></i><i></i></span><span id="dev">Paused</span></span>
+      <button class="x ln" id="hide" title="Close (Esc)" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="np">
+      <div class="art" id="art" title="Open Amplite"><div class="ph"><svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg></div><img id="i1" alt=""><img id="i2" alt=""></div>
+      <div class="meta">
+        <div class="kick" id="kick">Now playing</div>
+        <div class="t" id="t">Nothing playing</div>
+        <div class="a" id="a">Pick something in Amplite</div>
+      </div>
+      <button class="like" id="like" title="Like" aria-label="Like"><svg viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-9.4-9.4A5 5 0 0 1 12 6.2a5 5 0 0 1 9.4 4.9C19.5 15.9 12 20.5 12 20.5z"/></svg></button>
+    </div>
+  </section>
+
+  <div class="prog">
+    <div class="bar" id="bar" role="slider" aria-label="Position"><div class="tr"><div class="fi" id="fill"></div></div><div class="th" id="thumb"></div></div>
+    <div class="times"><span id="cur">0:00</span><span id="dur">0:00</span></div>
+  </div>
+
   <div class="ctl">
-    <button class="b" id="like" title="Like"><svg viewBox="0 0 24 24"><path d="M12 21s-7-4.4-9.3-9A5.3 5.3 0 0 1 12 6a5.3 5.3 0 0 1 9.3 6C19 16.6 12 21 12 21z" id="heart"/></svg></button>
-    <button class="b" id="prev" title="Previous"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
-    <button class="b play" id="play" title="Play / Pause"><svg viewBox="0 0 24 24" id="pi"><path d="M8 5v14l11-7z"/></svg></button>
-    <button class="b" id="next" title="Next"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
-    <div class="vol"><svg viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M4 9v6h4l5 4V5L8 9z"/></svg><input type="range" id="vol" min="0" max="100" aria-label="Volume"></div>
+    <button class="b sm ln" id="shuffle" title="Shuffle" aria-label="Shuffle"><svg viewBox="0 0 24 24"><path d="M16 4h4v4M4 20L20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/></svg></button>
+    <button class="b" id="prev" title="Previous" aria-label="Previous"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="2.6" height="14" rx="1.2"/><path d="M19.5 6.3v11.4a1 1 0 0 1-1.5.9L9.6 13a1.2 1.2 0 0 1 0-2L18 5.4a1 1 0 0 1 1.5.9z"/></svg></button>
+    <button class="b play" id="play" title="Play / Pause (Space)" aria-label="Play or pause"><svg viewBox="0 0 24 24" id="pi"></svg></button>
+    <button class="b" id="next" title="Next" aria-label="Next"><svg viewBox="0 0 24 24"><rect x="16.4" y="5" width="2.6" height="14" rx="1.2"/><path d="M4.5 6.3v11.4a1 1 0 0 0 1.5.9l8.4-5.6a1.2 1.2 0 0 0 0-2L6 5.4a1 1 0 0 0-1.5.9z"/></svg></button>
+    <button class="b sm ln" id="repeat" title="Repeat" aria-label="Repeat"><svg viewBox="0 0 24 24"><path d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/></svg><span class="one">1</span></button>
+  </div>
+
+  <div class="vol">
+    <button class="vi ln" id="mute" title="Mute" aria-label="Mute"><svg viewBox="0 0 24 24" id="vic"></svg></button>
+    <input type="range" id="vol" min="0" max="100" value="50" aria-label="Volume">
+    <span class="vn" id="vn">50</span>
+  </div>
+
+  <div class="tiles">
+    <button class="tile ln" data-act="open"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M8 4v5"/></svg>Open</button>
+    <button class="tile ln" data-act="amp"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 14.5v-2M9.5 14.5v-5M12.5 14.5v-3.5"/><circle cx="17.5" cy="12" r="1.3"/></svg>Mini amp</button>
+    <button class="tile ln" data-act="desklyrics" id="dlTile"><svg viewBox="0 0 24 24"><path d="M4 6h11M4 11h16M4 16h8"/><path d="M17 15v5M15 18l2 2 2-2" id="dlArrow" style="display:none"/></svg><span id="dlLbl">Lyrics</span></button>
+    <button class="tile ln" data-act="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
+  </div>
+
+  <div class="foot">
+    <span class="k" id="ver">Amplite</span>
+    <button class="quit ln" data-act="quit" title="Quit Amplite"><svg viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>Quit</button>
   </div>
 </div>
 <script>
-  const $ = id => document.getElementById(id);
-  const PLAY = '<path d="M8 5v14l11-7z"/>', PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
-  let st = null, at = 0, img = '', volBusy = 0, likeBusy = 0, timer = null;
-  const pos = () => !st?.track ? 0 : Math.min(st.track.duration || 0, st.position + (st.paused ? 0 : Date.now() - at));
-  function draw() {
-    const t = st?.track;
-    $('t').textContent = t?.title || 'Nothing playing'; $('a').textContent = t?.artist || '';
-    if ((t?.image || '') !== img) { img = t?.image || ''; const u = img ? `url("${img.replace(/"/g, '%22')}")` : ''; $('art').style.backgroundImage = u; $('bg').style.backgroundImage = u; }
-    $('pi').innerHTML = st && !st.paused ? PAUSE : PLAY;
-    if (st?.accent) document.documentElement.style.setProperty('--accent', st.accent);
-    $('fill').style.transform = `scaleX(${t?.duration ? Math.min(1, pos() / t.duration) : 0})`;
-    if (typeof st?.volume === 'number' && Date.now() > volBusy) $('vol').value = st.volume;
-    if (Date.now() > likeBusy) $('like').classList.toggle('liked', !!st?.liked);
+  const $ = id => document.getElementById(id), P = window.panel;
+  const PLAY = '<path d="M8 5.6v12.8a1 1 0 0 0 1.5.9l10-6.4a1 1 0 0 0 0-1.8l-10-6.4A1 1 0 0 0 8 5.6z"/>';
+  const PAUSE = '<rect x="6" y="5" width="4.2" height="14" rx="1.4"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.4"/>';
+  const VOL = ['<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"/><path d="M16 9l5 6M21 9l-5 6"/>', '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/>', '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/>'];
+  const LOGO = '<svg viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="var(--accent)"/><g fill="var(--on-accent)"><rect x="7.5" y="14" width="3.2" height="10" rx="1.6"/><rect x="14.4" y="8" width="3.2" height="16" rx="1.6"/><rect x="21.3" y="11" width="3.2" height="13" rx="1.6"/></g></svg>';
+  $('mark').innerHTML = LOGO;
+  let st = null, at = 0, img = null, uri = null, themeKey = '', busy = {}, timer = null, lastVol = 50, drag = false, side = 1;
+  const hold = (k, ms = 2500) => { busy[k] = Date.now() + ms; }, held = k => Date.now() < (busy[k] || 0);
+  const pos = () => !st?.track ? 0 : Math.max(0, Math.min(st.track.duration || 0, st.position + (st.paused ? 0 : Date.now() - at)));
+  const fmt = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const css = (k, v) => v && document.documentElement.style.setProperty(k, v);
+
+  function applyTheme(t) {
+    const key = JSON.stringify(t || {}) + (st?.accent || ''); if (key === themeKey) return; themeKey = key;
+    if (t) {
+      css('--bg', t.bg); css('--panel', t.panel || t.bg); css('--elev', t.elev || t.panel); css('--text', t.text); css('--muted', t.muted);
+      css('--accent', t.accent || st?.accent); css('--on-accent', t.onAccent);
+      if (t.font) css('--font', t.font + ", 'Segoe UI', system-ui, sans-serif");
+      document.documentElement.style.setProperty('--display', t.display ? t.display + ', var(--font)' : 'var(--font)');
+      let fl = document.getElementById('lookFont');
+      if (t.fontUrl) { if (!fl) { fl = document.createElement('link'); fl.id = 'lookFont'; fl.rel = 'stylesheet'; document.head.append(fl); } if (fl.href !== t.fontUrl) fl.href = t.fontUrl; }
+      else fl?.remove();
+    } else if (st?.accent) css('--accent', st.accent);
   }
-  async function poll() { st = await window.panel.now().catch(() => null); at = Date.now(); draw(); }
-  function start() { clearInterval(timer); poll(); timer = setInterval(() => { if (document.visibilityState === 'visible') { poll(); } }, 1500); }
-  setInterval(draw, 250);
-  const cmd = c => { window.panel.cmd(c); setTimeout(poll, 350); };
-  $('play').onclick = () => { if (st) { st.position = pos(); st.paused = !st.paused; at = Date.now(); draw(); } cmd('toggle'); };
+  function setArt(u) {
+    if (u === img) return; img = u;
+    const a = $('i1'), b = $('i2'), show = side ? b : a, hide = side ? a : b; side ^= 1;
+    const g1 = $('g1'), g2 = $('g2'), gs = side ? g1 : g2, gh = side ? g2 : g1;
+    if (!u) { a.classList.remove('on'); b.classList.remove('on'); g1.style.opacity = g2.style.opacity = 0; return; }
+    show.onload = () => { show.classList.add('on'); hide.classList.remove('on'); gs.style.backgroundImage = `url("${u.replace(/"/g, '%22')}")`; gs.style.opacity = ''; gs.classList.remove('off'); gh.classList.add('off'); gh.style.opacity = 0; };
+    show.src = u;
+  }
+  function draw() {
+    const t = st?.track, playing = !!(t && !st.paused);
+    if ((t?.uri || null) !== uri) {
+      uri = t?.uri || null;
+      $('t').textContent = t?.title || 'Nothing playing'; $('a').textContent = t ? [t.artist, t.album].filter(Boolean).join(' · ') : 'Pick something in Amplite';
+      ['t', 'a'].forEach(k => { const el = $(k); el.classList.remove('fade'); void el.offsetWidth; el.classList.add('fade'); });
+    }
+    setArt(t?.image || '');
+    $('kick').textContent = !t ? 'Amplite' : playing ? 'Now playing' : 'Paused';
+    $('pi').innerHTML = playing ? PAUSE : PLAY;
+    $('pill').classList.toggle('on', playing);
+    $('dev').textContent = st?.device ? (playing ? 'On ' : 'Paused · ') + st.device : playing ? 'Playing' : 'Paused';
+    const d = t?.duration || 0, p = drag ? drag * d : pos(), f = d ? Math.min(1, p / d) : 0;
+    $('fill').style.transform = `scaleX(${f})`; $('thumb').style.left = f * 100 + '%';
+    $('cur').textContent = fmt(p); $('dur').textContent = d ? fmt(d) : '0:00';
+    if (typeof st?.volume === 'number' && !held('vol')) setVolUi(st.volume);
+    if (!held('like')) $('like').classList.toggle('liked', !!st?.liked);
+    if (!held('shuffle')) $('shuffle').classList.toggle('act', !!st?.shuffle);
+    if (!held('repeat')) { const r = st?.repeat || 0; $('repeat').classList.toggle('act', r > 0); $('repeat').classList.toggle('r2', r === 2); $('repeat').title = ['Repeat: off', 'Repeat: all', 'Repeat: this song'][r]; }
+    const dl = !!st?.desklyrics; $('dlTile').classList.toggle('on', dl);
+    $('dlTile').title = st?.dlLocked ? 'Desktop lyrics are locked; click to unlock and move them' : dl ? 'Turn off desktop lyrics' : 'Show lyrics on your desktop';
+    $('dlTile').dataset.act = st?.dlLocked ? 'dlunlock' : 'desklyrics'; $('dlLbl').textContent = st?.dlLocked ? 'Move lyrics' : 'Lyrics';
+    $('ver').textContent = st?.version ? 'Amplite ' + st.version + (st.theme?.look && st.theme.look !== 'stock' ? ' · ' + st.theme.look[0].toUpperCase() + st.theme.look.slice(1) + ' look' : '') : 'Amplite';
+  }
+  function setVolUi(v) { $('vol').value = v; $('vol').style.setProperty('--p', v + '%'); $('vn').textContent = v; $('vic').innerHTML = VOL[v <= 0 ? 0 : v < 50 ? 1 : 2]; if (v > 0) lastVol = v; }
+  async function poll() { const s = await P.now().catch(() => null); if (s) { st = s; at = Date.now(); applyTheme(s.theme); } draw(); }
+  function start() { const c = $('card'); c.classList.add('again'); void c.offsetWidth; c.classList.remove('again'); clearInterval(timer); poll(); timer = setInterval(poll, 1200); }
+  setInterval(draw, 200);
+  const cmd = c => { P.cmd(c); setTimeout(poll, 350); setTimeout(poll, 1100); };
+  const toggle = () => { if (st?.track) { st.position = pos(); st.paused = !st.paused; at = Date.now(); draw(); } cmd('toggle'); };
+  $('play').onclick = toggle;
   $('next').onclick = () => cmd('next'); $('prev').onclick = () => cmd('prev');
-  $('like').onclick = () => { likeBusy = Date.now() + 2500; $('like').classList.toggle('liked'); cmd('like'); };
-  $('vol').oninput = () => { volBusy = Date.now() + 2500; };
-  $('vol').onchange = () => { volBusy = Date.now() + 2500; cmd('vol:=' + $('vol').value); };
-  $('bar').onclick = e => { const r = $('bar').getBoundingClientRect(); if (st?.track?.duration) cmd('seek:=' + Math.round((e.clientX - r.left) / r.width * st.track.duration)); };
-  $('open').onclick = () => window.panel.open();
-  window.panel.onShow(start);
+  $('like').onclick = () => { hold('like'); const l = $('like'); l.classList.toggle('liked'); l.classList.add('pulse'); setTimeout(() => l.classList.remove('pulse'), 180); cmd('like'); };
+  $('shuffle').onclick = () => { hold('shuffle'); $('shuffle').classList.toggle('act'); cmd('shuffle'); };
+  $('repeat').onclick = () => { hold('repeat'); const r = ((st?.repeat || 0) + 1) % 3; if (st) st.repeat = r; busy.repeat = 0; draw(); hold('repeat'); cmd('repeat'); };
+  $('vol').oninput = () => { hold('vol'); setVolUi(+$('vol').value); };
+  $('vol').onchange = () => { hold('vol'); cmd('vol:=' + $('vol').value); };
+  $('mute').onclick = () => { const v = +$('vol').value > 0 ? 0 : lastVol || 50; hold('vol'); setVolUi(v); cmd('vol:=' + v); };
+  const frac = e => { const r = $('bar').getBoundingClientRect(); return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); };
+  $('bar').onpointerdown = e => { if (!st?.track?.duration) return; $('bar').setPointerCapture(e.pointerId); drag = frac(e) || 0.0001; draw(); };
+  $('bar').onpointermove = e => { if (drag) { drag = frac(e) || 0.0001; draw(); } };
+  $('bar').onpointerup = e => { if (!drag) return; const ms = Math.round(frac(e) * st.track.duration); drag = false; st.position = ms; at = Date.now(); draw(); cmd('seek:=' + ms); };
+  $('art').onclick = () => P.act('open');
+  $('hide').onclick = () => P.act('hide');
+  document.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => { const a = b.dataset.act; P.act(a); if (a === 'desklyrics' || a === 'dlunlock') setTimeout(poll, 400); }));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') return P.act('hide');
+    if (e.target.tagName === 'INPUT' && e.key.startsWith('Arrow')) return;
+    if (e.key === ' ' && e.target.tagName !== 'BUTTON') { e.preventDefault(); toggle(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); e.shiftKey ? cmd('next') : cmd('seek:+5000'); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); e.shiftKey ? cmd('prev') : cmd('seek:-5000'); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); const v = Math.max(0, Math.min(100, +$('vol').value + (e.key === 'ArrowUp' ? 5 : -5))); hold('vol'); setVolUi(v); cmd('vol:=' + v); }
+  });
+  setVolUi(50);
+  P.onShow(start);
   start();
 </script>
 </body></html>
